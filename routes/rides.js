@@ -190,15 +190,23 @@ router.get('/featured', async (req, res) => {
 });
 
 // Get rides by driver
-router.get('/driver/:driverId', async (req, res) => {
+router.get('/driver/:driverId', auth, async (req, res) => {
   try {
-    const rides = await Ride.find({ driverId: req.params.driverId })
-      .populate('driverId', 'firstName lastName avatar rating totalRides')
-      .sort({ departureDate: -1 });
+    const { driverId } = req.params;
+    
+    // Verify the user is requesting their own rides or has permission
+    if (req.user._id.toString() !== driverId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const rides = await Ride.find({ driverId })
+      .populate('driverId', 'firstName lastName avatar rating')
+      .populate('bookings')
+      .sort({ createdAt: -1 });
 
     res.json({ rides });
   } catch (error) {
-    console.error('Get driver rides error:', error);
+    console.error('Get rides by driver error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

@@ -1,93 +1,99 @@
 const express = require('express');
-const { body, validationResult } = require('express-validator');
+const auth = require('../middleware/auth');
 const Booking = require('../models/Booking');
 const Ride = require('../models/Ride');
-const Notification = require('../models/Notification');
-const auth = require('../middleware/auth');
+const Notification = require('../models/Notification'); // Add this import
 
 const router = express.Router();
 
-// Create booking
-router.post('/', auth, [
-  body('rideId').isMongoId(),
-  body('seatsBooked').isInt({ min: 1, max: 4 }),
-  body('message').optional().trim()
-], async (req, res) => {
+// Create a booking
+router.post('/', auth, async (req, res) => {
+  console.log('Booking request received from user:', req.user._id);
+  console.log('Request body:', req.body);
+  
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
+    const { rideId, seatsBooked, message } = req.body;
+    const passengerId = req.user._id;
+
+    // Validate input
+    if (!rideId || !seatsBooked) {
       return res.status(400).json({ 
-        message: 'Validation failed',
-        errors: errors.array()
+        message: 'Ride ID and seats booked are required' 
       });
     }
 
-    const { rideId, seatsBooked, message } = req.body;
-
-    // Check if ride exists and is active
+    // Check if ride exists and has available seats
     const ride = await Ride.findById(rideId).populate('driverId');
-    if (!ride || ride.status !== 'active') {
-      return res.status(404).json({ message: 'Ride not found or not available' });
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
     }
 
-    // Check if user is trying to book their own ride
-    if (ride.driverId._id.equals(req.user._id)) {
-      return res.status(400).json({ message: 'Cannot book your own ride' });
+    if (ride.driverId._id.toString() === passengerId.toString()) {
+      return res.status(400).json({ 
+        message: 'You cannot book your own ride' 
+      });
     }
 
-    // Check if enough seats available
     if (ride.availableSeats < seatsBooked) {
-      return res.status(400).json({ message: 'Not enough seats available' });
+      return res.status(400).json({ 
+        message: 'Not enough available seats' 
+      });
     }
 
     // Check if user already has a booking for this ride
-    const existingBooking = await Booking.findOne({ rideId, passengerId: req.user._id });
+    const existingBooking = await Booking.findOne({
+      rideId,
+      passengerId,
+      status: { $nin: ['cancelled', 'declined'] }
+    });
+
     if (existingBooking) {
-      return res.status(400).json({ message: 'You already have a booking for this ride' });
+      return res.status(400).json({ 
+        message: 'You already have a booking for this ride' 
+      });
     }
 
-    const totalAmount = ride.pricePerSeat * seatsBooked;
-
+    // Create booking
     const booking = new Booking({
       rideId,
-      passengerId: req.user._id,
-      seatsBooked,
-      message,
-      totalAmount
+      passengerId,
+      seatsBooked: parseInt(seatsBooked),
+      message: message || '',
+      status: 'pending',
+      paymentStatus: 'pending',
+      totalAmount: ride.pricePerSeat * seatsBooked
     });
 
     await booking.save();
-    await booking.populate('passengerId', 'firstName lastName avatar rating');
-    await booking.populate('rideId', 'fromLocation toLocation departureDate departureTime');
+    
+    // Populate the booking for response
+    const populatedBooking = await Booking.findById(booking._id)
+      .populate('rideId')
+      .populate('passengerId', 'firstName lastName email avatar');
 
-    // Add booking to ride
-    ride.bookings.push(booking._id);
-    await ride.save();
+    console.log('Booking created successfully:', booking._id);
 
-    // Create notification for driver
-    const notification = new Notification({
-      userId: ride.driverId._id,
-      type: 'booking_request',
-      title: 'New Booking Request',
-      message: `${req.user.firstName} ${req.user.lastName} wants to book ${seatsBooked} seat(s) for your ride from ${ride.fromLocation} to ${ride.toLocation}`,
-      data: { bookingId: booking._id, rideId: ride._id },
-      actionUrl: `/bookings/${booking._id}`
-    });
-    await notification.save();
-
-    // Send real-time notification
-    req.io.to(ride.driverId._id.toString()).emit('new-notification', {
-      type: 'booking_request',
-      notification
-    });
+    // Emit real-time notification to driver
+    if (req.io) {
+      req.io.to(`user_${ride.driverId._id}`).emit('new-booking', {
+        booking: populatedBooking,
+        message: `New booking request from ${req.user.firstName} ${req.user.lastName}`
+      });
+    }
 
     res.status(201).json({
-      message: 'Booking request sent successfully',
-      booking
+      success: true,
+      booking: populatedBooking,
+      message: 'Booking request sent successfully'
     });
+
   } catch (error) {
-    console.error('Create booking error:', error);
-    res.status(500).json({ message: 'Server error during booking creation' });
+    console.error('Booking creation error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error during booking creation',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -130,7 +136,7 @@ router.get('/ride-bookings', auth, async (req, res) => {
   }
 });
 
-// Accept booking
+// Accept booking - Fix the notification creation
 router.put('/:bookingId/accept', auth, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.bookingId)
@@ -162,34 +168,32 @@ router.put('/:bookingId/accept', auth, async (req, res) => {
     booking.rideId.availableSeats -= booking.seatsBooked;
     await booking.rideId.save();
 
-    // Create notification for passenger
-    const notification = new Notification({
-      userId: booking.passengerId._id,
-      type: 'booking_accepted',
-      title: 'Booking Accepted',
-      message: `Your booking for the ride from ${booking.rideId.fromLocation} to ${booking.rideId.toLocation} has been accepted!`,
-      data: { bookingId: booking._id, rideId: booking.rideId._id },
-      actionUrl: `/bookings/${booking._id}`
-    });
-    await notification.save();
-
-    // Send real-time notification
-    req.io.to(booking.passengerId._id.toString()).emit('new-notification', {
-      type: 'booking_accepted',
-      notification
-    });
+    // Send real-time notification (without creating notification document for now)
+    if (req.io) {
+      req.io.to(`user_${booking.passengerId._id}`).emit('new-notification', {
+        type: 'booking_accepted',
+        title: 'Booking Accepted',
+        message: `Your booking for the ride from ${booking.rideId.fromLocation} to ${booking.rideId.toLocation} has been accepted!`,
+        bookingId: booking._id
+      });
+    }
 
     res.json({
+      success: true,
       message: 'Booking accepted successfully',
       booking
     });
   } catch (error) {
     console.error('Accept booking error:', error);
-    res.status(500).json({ message: 'Server error during booking acceptance' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error during booking acceptance',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
-// Decline booking
+// Decline booking - Fix similar issues
 router.put('/:bookingId/decline', auth, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.bookingId)
@@ -212,30 +216,28 @@ router.put('/:bookingId/decline', auth, async (req, res) => {
     booking.status = 'declined';
     await booking.save();
 
-    // Create notification for passenger
-    const notification = new Notification({
-      userId: booking.passengerId._id,
-      type: 'booking_declined',
-      title: 'Booking Declined',
-      message: `Your booking for the ride from ${booking.rideId.fromLocation} to ${booking.rideId.toLocation} has been declined.`,
-      data: { bookingId: booking._id, rideId: booking.rideId._id },
-      actionUrl: `/search`
-    });
-    await notification.save();
-
     // Send real-time notification
-    req.io.to(booking.passengerId._id.toString()).emit('new-notification', {
-      type: 'booking_declined',
-      notification
-    });
+    if (req.io) {
+      req.io.to(`user_${booking.passengerId._id}`).emit('new-notification', {
+        type: 'booking_declined',
+        title: 'Booking Declined',
+        message: `Your booking for the ride from ${booking.rideId.fromLocation} to ${booking.rideId.toLocation} has been declined.`,
+        bookingId: booking._id
+      });
+    }
 
     res.json({
+      success: true,
       message: 'Booking declined successfully',
       booking
     });
   } catch (error) {
     console.error('Decline booking error:', error);
-    res.status(500).json({ message: 'Server error during booking decline' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error during booking decline',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -274,6 +276,29 @@ router.put('/:bookingId/cancel', auth, async (req, res) => {
   } catch (error) {
     console.error('Cancel booking error:', error);
     res.status(500).json({ message: 'Server error during booking cancellation' });
+  }
+});
+
+// Get pending booking requests (for drivers)
+router.get('/requests', auth, async (req, res) => {
+  try {
+    // Find all rides by this driver
+    const rides = await Ride.find({ driverId: req.user._id }).select('_id');
+    const rideIds = rides.map(ride => ride._id);
+
+    // Find all pending booking requests for these rides
+    const bookingRequests = await Booking.find({ 
+      rideId: { $in: rideIds },
+      status: 'pending'
+    })
+      .populate('passengerId', 'firstName lastName avatar rating phone')
+      .populate('rideId', 'fromLocation toLocation departureDate departureTime pricePerSeat')
+      .sort({ createdAt: -1 });
+
+    res.json({ requests: bookingRequests });
+  } catch (error) {
+    console.error('Get booking requests error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

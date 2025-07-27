@@ -3,29 +3,43 @@ const User = require('../models/User');
 
 const auth = async (req, res, next) => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
+    // Get token from header
+    const authHeader = req.header('Authorization');
     
-    if (!token) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.log('Auth middleware - No token provided or invalid format');
       return res.status(401).json({ message: 'Access denied. No token provided.' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    const user = await User.findById(decoded.userId).select('-password');
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     
-    if (!user || !user.isActive) {
-      return res.status(401).json({ message: 'Invalid token or user not found.' });
+    if (!token) {
+      console.log('Auth middleware - Empty token');
+      return res.status(401).json({ message: 'Access denied. No token provided.' });
     }
 
-    req.user = user;
-    next();
+    try {
+      // Verify token
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      console.log('Auth middleware - Token decoded successfully for user:', decoded.userId);
+      
+      // Get user from database
+      const user = await User.findById(decoded.userId).select('-password');
+      
+      if (!user) {
+        console.log('Auth middleware - User not found for ID:', decoded.userId);
+        return res.status(401).json({ message: 'Token is not valid. User not found.' });
+      }
+
+      req.user = user;
+      next();
+    } catch (jwtError) {
+      console.error('Auth middleware - JWT verification failed:', jwtError.message);
+      return res.status(401).json({ message: 'Token is not valid.' });
+    }
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token.' });
-    }
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Token expired.' });
-    }
-    res.status(500).json({ message: 'Server error during authentication.' });
+    console.error('Auth middleware - Unexpected error:', error);
+    res.status(500).json({ message: 'Server Error' });
   }
 };
 
