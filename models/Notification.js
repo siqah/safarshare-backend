@@ -12,6 +12,15 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
+    enum: [
+      'booking_request', 
+      'booking_accepted', 
+      'booking_declined', 
+      'booking_cancelled',
+      'ride_reminder',
+      'payment_success',
+      'message_received'
+    ],
     required: true
   },
   title: {
@@ -26,16 +35,19 @@ const notificationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed,
     default: {}
   },
-  actionUrl: {
-    type: String,
-    default: null
-  },
   read: {
     type: Boolean,
     default: false
+  },
+  actionUrl: {
+    type: String
   }
 }, {
   timestamps: true
 });
+
+// Index for efficient queries
+notificationSchema.index({ userId: 1, createdAt: -1 });
+notificationSchema.index({ userId: 1, read: 1 });
 
 module.exports = mongoose.model('Notification', notificationSchema);
