@@ -14,6 +14,8 @@ const rideRoutes = require('./routes/rides');
 const bookingRoutes = require('./routes/bookings');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
+const driverRoutes = require('./routes/driver');
+
 const paymentRoutes = require('./routes/payments');
 
 const app = express();
@@ -35,11 +37,27 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting
+// Rate limiting - Make it more lenient
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 500, // Increased from 100 to 500 requests per windowMs
+  message: {
+    error: 'Too many requests, please try again later.',
+    retryAfter: Math.ceil(15 * 60) // 15 minutes in seconds
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip rate limiting for certain routes during development
+  skip: (req) => {
+    if (process.env.NODE_ENV === 'development') {
+      // Skip rate limiting for auth routes to prevent login issues
+      return req.path.startsWith('/api/auth/');
+    }
+    return false;
+  }
 });
+
+// Apply less restrictive rate limiting
 app.use(limiter);
 
 app.use(express.json({ limit: '10mb' }));
@@ -207,6 +225,8 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/driver', driverRoutes)
+
 
 // Health check
 app.get('/api/health', (req, res) => {

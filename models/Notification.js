@@ -1,7 +1,3 @@
-// Make sure you have this import
-const { body, validationResult } = require('express-validator');
-
-
 const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema({
@@ -19,7 +15,9 @@ const notificationSchema = new mongoose.Schema({
       'booking_cancelled',
       'ride_reminder',
       'payment_success',
-      'message_received'
+      'message_received',
+      'driver_approved',
+      'driver_rejected'
     ],
     required: true
   },
