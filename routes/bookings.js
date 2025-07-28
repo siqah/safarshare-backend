@@ -2,7 +2,13 @@ const express = require('express');
 const auth = require('../middleware/auth');
 const Booking = require('../models/Booking');
 const Ride = require('../models/Ride');
-const Notification = require('../models/Notification'); // Add this import
+const User = require('../models/User');
+const {
+  createBookingRequestNotification,
+  createBookingAcceptedNotification,
+  createBookingDeclinedNotification,
+  createBookingCancelledNotification
+} = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -73,12 +79,16 @@ router.post('/', auth, async (req, res) => {
 
     console.log('Booking created successfully:', booking._id);
 
-    // Emit real-time notification to driver
-    if (req.io) {
-      req.io.to(`user_${ride.driverId._id}`).emit('new-booking', {
-        booking: populatedBooking,
-        message: `New booking request from ${req.user.firstName} ${req.user.lastName}`
-      });
+    // Create notification for driver
+    try {
+      await createBookingRequestNotification(
+        ride.driverId._id,
+        rideId,
+        `${req.user.firstName} ${req.user.lastName}`,
+        req.io
+      );
+    } catch (notifError) {
+      console.error('Error creating booking notification:', notifError);
     }
 
     res.status(201).json({
@@ -168,14 +178,19 @@ router.put('/:bookingId/accept', auth, async (req, res) => {
     booking.rideId.availableSeats -= booking.seatsBooked;
     await booking.rideId.save();
 
-    // Send real-time notification (without creating notification document for now)
-    if (req.io) {
-      req.io.to(`user_${booking.passengerId._id}`).emit('new-notification', {
-        type: 'booking_accepted',
-        title: 'Booking Accepted',
-        message: `Your booking for the ride from ${booking.rideId.fromLocation} to ${booking.rideId.toLocation} has been accepted!`,
-        bookingId: booking._id
-      });
+    // Get passenger details for notification
+    const passenger = await User.findById(booking.passengerId);
+    
+    // Create notification for passenger
+    try {
+      await createBookingAcceptedNotification(
+        booking.passengerId._id,
+        booking.rideId._id,
+        req.user.firstName + ' ' + req.user.lastName,
+        req.io
+      );
+    } catch (notifError) {
+      console.error('Error creating acceptance notification:', notifError);
     }
 
     res.json({
@@ -216,14 +231,16 @@ router.put('/:bookingId/decline', auth, async (req, res) => {
     booking.status = 'declined';
     await booking.save();
 
-    // Send real-time notification
-    if (req.io) {
-      req.io.to(`user_${booking.passengerId._id}`).emit('new-notification', {
-        type: 'booking_declined',
-        title: 'Booking Declined',
-        message: `Your booking for the ride from ${booking.rideId.fromLocation} to ${booking.rideId.toLocation} has been declined.`,
-        bookingId: booking._id
-      });
+    // Create notification for passenger
+    try {
+      await createBookingDeclinedNotification(
+        booking.passengerId._id,
+        booking.rideId._id,
+        req.user.firstName + ' ' + req.user.lastName,
+        req.io
+      );
+    } catch (notifError) {
+      console.error('Error creating decline notification:', notifError);
     }
 
     res.json({

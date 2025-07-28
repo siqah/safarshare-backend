@@ -1,7 +1,9 @@
 const express = require('express');
 const Message = require('../models/Message');
 const Booking = require('../models/Booking');
+const User = require('../models/User');
 const auth = require('../middleware/auth');
+const { createMessageNotification } = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -77,6 +79,17 @@ router.post('/', auth, async (req, res) => {
         message,
         sender: message.senderId
       });
+    }
+
+    // Create notification for message recipient
+    try {
+      await createMessageNotification(
+        receiverId,
+        `${message.senderId.firstName} ${message.senderId.lastName}`,
+        req.io
+      );
+    } catch (notifError) {
+      console.error('Error creating message notification:', notifError);
     }
 
     res.status(201).json({ 
