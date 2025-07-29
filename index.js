@@ -20,7 +20,22 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      const allowedOrigins = [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'https://safarishare.netlify.app'
+      ];
+      
+      if (allowedOrigins.includes(normalizedOrigin) || normalizedOrigin.endsWith('.netlify.app')) {
+        return callback(null, true);
+      }
+      
+      return callback(null, true); // Allow all for now
+    },
     methods: ["GET", "POST"],
     allowedHeaders: ["my-custom-header"],
     credentials: true
@@ -420,45 +435,80 @@ process.on('unhandledRejection', (err, promise) => {
   });
 });
 
-// More permissive CORS for production
+// CORS configuration - IMPORTANT: Place this BEFORE other middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
+    console.log('🔍 CORS Check - Origin:', origin);
+    
+    // Allow requests with no origin (mobile apps, server-to-server, etc.)
+    if (!origin) {
+      console.log('✅ No origin - allowing');
+      return callback(null, true);
+    }
+    
+    // Remove trailing slash from origin for comparison
+    const normalizedOrigin = origin.replace(/\/$/, '');
     
     const allowedOrigins = [
       'http://localhost:5173',
       'http://localhost:5174',
       'https://safarishare.netlify.app',
-      'https://safarishare-app.netlify.app',
-      process.env.FRONTEND_URL
+      'https://safarishare-app.netlify.app'
     ];
     
-    // Allow any netlify.app subdomain
-    if (origin.endsWith('.netlify.app')) {
+    // Check if normalized origin is in allowed list
+    if (allowedOrigins.includes(normalizedOrigin)) {
+      console.log('✅ Origin allowed:', normalizedOrigin);
       return callback(null, true);
     }
     
-    if (allowedOrigins.includes(origin)) {
+    // Allow any netlify.app subdomain
+    if (normalizedOrigin.endsWith('.netlify.app')) {
+      console.log('✅ Netlify subdomain allowed:', normalizedOrigin);
       return callback(null, true);
-    } else {
-      console.log('CORS blocked origin:', origin);
-      return callback(null, true); // Allow for now - remove in production
     }
+    
+    // For development, allow all origins (remove this in production)
+    console.log('⚠️ Origin not in allowed list, but allowing anyway:', normalizedOrigin);
+    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  optionsSuccessStatus: 200
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 }));
 
-// Add preflight handler
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+// Additional CORS headers middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  if (origin) {
+    // Remove trailing slash from origin
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    res.header('Access-Control-Allow-Origin', normalizedOrigin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.sendStatus(200);
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    console.log('✅ Handling preflight request');
+    return res.sendStatus(200);
+  }
+  
+  next();
 });
 
 // Start the server
