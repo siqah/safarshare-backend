@@ -69,7 +69,7 @@ jobs:
         
         echo "🏁 Keep-alive job completed at $(date)"
 
-    - name: 📊 Verify Backend Health
+    - name: Verify Backend Health
       if: success()
       run: |
         echo "🔍 Performing health verification..."
