@@ -14,7 +14,6 @@ const notificationSchema = new mongoose.Schema({
       'booking_declined', 
       'booking_cancelled',
       'ride_reminder',
-      'payment_success',
       'message_received',
       'driver_approved',
       'driver_rejected'

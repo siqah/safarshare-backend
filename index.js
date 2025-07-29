@@ -16,8 +16,6 @@ const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
 const driverRoutes = require('./routes/driver');
 
-const paymentRoutes = require('./routes/payments');
-
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -224,7 +222,6 @@ app.use('/api/rides', rideRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/payments', paymentRoutes);
 app.use('/api/driver', driverRoutes)
 
 

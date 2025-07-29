@@ -30,23 +30,6 @@ const bookingSchema = new mongoose.Schema({
     type: Number,
     required: true,
     min: 0
-  },
-  paymentStatus: {
-    type: String,
-    enum: ['pending', 'paid', 'failed', 'refunded'],
-    default: 'pending'
-  },
-  paymentId: {
-    type: String,
-    default: null
-  },
-  mpesaTransactionId: {
-    type: String,
-    default: null
-  },
-  mpesaReceiptNumber: {
-    type: String,
-    default: null
   }
 }, {
   timestamps: true
