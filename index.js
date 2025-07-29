@@ -28,6 +28,81 @@ const io = socketIo(server, {
   transports: ['websocket', 'polling']
 });
 
+// MongoDB Atlas Connection Function
+const connectDB = async () => {
+  try {
+    console.log('🔄 Connecting to MongoDB Atlas...');
+    console.log('📍 Connection URI:', process.env.MONGODB_URI ? 'URI found' : 'URI missing');
+    
+    const options = {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10, 
+      minPoolSize: 1, 
+      maxIdleTimeMS: 30000, 
+      family: 4 
+    };
+
+    const conn = await mongoose.connect(process.env.MONGODB_URI, options);
+
+    console.log('✅ MongoDB Atlas Connected Successfully!');
+    console.log(`📂 Database: ${conn.connection.name}`);
+    console.log(`🌐 Host: ${conn.connection.host}`);
+    console.log(`🔌 Port: ${conn.connection.port}`);
+    console.log(`📊 Ready State: ${conn.connection.readyState}`);
+
+  } catch (error) {
+    console.error('❌ MongoDB Atlas connection failed:', error.message);
+    
+    // Detailed error analysis
+    if (error.name === 'MongooseServerSelectionError') {
+      console.error('\n🔍 Possible solutions:');
+      console.error('1. Check if your IP is whitelisted in MongoDB Atlas');
+      console.error('2. Verify your username and password in the connection string');
+      console.error('3. Ensure your cluster is not paused');
+      console.error('4. Check your internet connection');
+      console.error('5. Try allowing access from anywhere (0.0.0.0/0) in Network Access');
+    }
+    
+    if (error.name === 'MongoParseError') {
+      console.error('\n🔍 Connection string format error:');
+      console.error('- Check if the connection string is properly formatted');
+      console.error('- Ensure special characters in password are URL encoded');
+    }
+    
+    console.error('\n💡 Quick fixes:');
+    console.error('1. Go to MongoDB Atlas → Network Access → Add IP Address → Allow Access from Anywhere');
+    console.error('2. Wait 1-2 minutes for changes to propagate');
+    console.error('3. Restart this server');
+    
+    process.exit(1);
+  }
+};
+
+// Connection event handlers
+mongoose.connection.on('connected', () => {
+  console.log('🟢 Mongoose connected to MongoDB Atlas');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('🔴 Mongoose connection error:', err.message);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('🟡 Mongoose disconnected from MongoDB Atlas');
+});
+
+mongoose.connection.on('reconnected', () => {
+  console.log('🔄 Mongoose reconnected to MongoDB Atlas');
+});
+
+// Handle connection interruption
+mongoose.connection.on('close', () => {
+  console.log('🔴 MongoDB Atlas connection closed');
+});
+
 // Middleware
 app.use(helmet());
 app.use(cors({
@@ -61,13 +136,8 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/safarishare', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
+// Initialize MongoDB Connection
+connectDB();
 
 // Socket.IO authentication middleware
 io.use((socket, next) => {
@@ -222,16 +292,29 @@ app.use('/api/rides', rideRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/driver', driverRoutes)
+app.use('/api/driver', driverRoutes);
 
-
-// Health check
+// Health check with MongoDB status
 app.get('/api/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState;
+  const dbStatusText = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    connections: io.engine.clientsCount
+    connections: io.engine.clientsCount,
+    database: {
+      status: dbStatusText[dbStatus],
+      readyState: dbStatus,
+      host: mongoose.connection.host,
+      name: mongoose.connection.name
+    }
   });
 });
 
@@ -243,6 +326,29 @@ app.get('/api/socket/health', (req, res) => {
     rooms: Object.keys(io.sockets.adapter.rooms),
     timestamp: new Date().toISOString()
   });
+});
+
+// Database health check
+app.get('/api/db/health', async (req, res) => {
+  try {
+    // Test database connection
+    const adminDb = mongoose.connection.db.admin();
+    const result = await adminDb.ping();
+    
+    res.json({
+      status: 'OK',
+      database: 'connected',
+      ping: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'ERROR',
+      database: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Error handling middleware
@@ -259,22 +365,62 @@ app.use('*', (req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
-const PORT = process.env.PORT || 5001; // Changed to 5001 to match your frontend config
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Socket.IO server ready`);
-});
+const PORT = process.env.PORT || 5001;
+
+// Start server only after database connection
+const startServer = async () => {
+  try {
+    // Wait for database connection before starting server
+    if (mongoose.connection.readyState === 0) {
+      await connectDB();
+    }
+    
+    server.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🔌 Socket.IO server ready`);
+      console.log(`🌐 API URL: http://localhost:${PORT}`);
+      console.log(`📱 Client URL: ${process.env.CLIENT_URL}`);
+      console.log(`🗄️ Database: Connected to MongoDB Atlas`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error.message);
+    process.exit(1);
+  }
+};
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+  console.log('🔄 SIGTERM received, shutting down gracefully');
   server.close(() => {
-    console.log('Server closed');
+    console.log('🔴 Server closed');
     mongoose.connection.close(false, () => {
-      console.log('MongoDB connection closed');
+      console.log('🔴 MongoDB connection closed');
       process.exit(0);
     });
   });
 });
+
+process.on('SIGINT', () => {
+  console.log('🔄 SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('🔴 Server closed');
+    mongoose.connection.close(false, () => {
+      console.log('🔴 MongoDB connection closed');
+      process.exit(0);
+    });
+  });
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err, promise) => {
+  console.error('🔴 Unhandled Promise Rejection:', err.message);
+  // Close server & exit process
+  server.close(() => {
+    process.exit(1);
+  });
+});
+
+// Start the server
+startServer();
 
 module.exports = { app, io };
