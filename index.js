@@ -18,30 +18,6 @@ const driverRoutes = require('./routes/driver');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      
-      const normalizedOrigin = origin.replace(/\/$/, '');
-      const allowedOrigins = [
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'https://safarishare.netlify.app'
-      ];
-      
-      if (allowedOrigins.includes(normalizedOrigin) || normalizedOrigin.endsWith('.netlify.app')) {
-        return callback(null, true);
-      }
-      
-      return callback(null, true); // Allow all for now
-    },
-    methods: ["GET", "POST"],
-    allowedHeaders: ["my-custom-header"],
-    credentials: true
-  },
-  transports: ['websocket', 'polling']
-});
 
 // MongoDB Atlas Connection Function
 const connectDB = async () => {
@@ -70,28 +46,6 @@ const connectDB = async () => {
 
   } catch (error) {
     console.error('❌ MongoDB Atlas connection failed:', error.message);
-    
-    // Detailed error analysis
-    if (error.name === 'MongooseServerSelectionError') {
-      console.error('\n🔍 Possible solutions:');
-      console.error('1. Check if your IP is whitelisted in MongoDB Atlas');
-      console.error('2. Verify your username and password in the connection string');
-      console.error('3. Ensure your cluster is not paused');
-      console.error('4. Check your internet connection');
-      console.error('5. Try allowing access from anywhere (0.0.0.0/0) in Network Access');
-    }
-    
-    if (error.name === 'MongoParseError') {
-      console.error('\n🔍 Connection string format error:');
-      console.error('- Check if the connection string is properly formatted');
-      console.error('- Ensure special characters in password are URL encoded');
-    }
-    
-    console.error('\n💡 Quick fixes:');
-    console.error('1. Go to MongoDB Atlas → Network Access → Add IP Address → Allow Access from Anywhere');
-    console.error('2. Wait 1-2 minutes for changes to propagate');
-    console.error('3. Restart this server');
-    
     process.exit(1);
   }
 };
@@ -109,47 +63,171 @@ mongoose.connection.on('disconnected', () => {
   console.log('🟡 Mongoose disconnected from MongoDB Atlas');
 });
 
-mongoose.connection.on('reconnected', () => {
-  console.log('🔄 Mongoose reconnected to MongoDB Atlas');
-});
+// MIDDLEWARE CONFIGURATION (IMPORTANT: ORDER MATTERS!)
 
-// Handle connection interruption
-mongoose.connection.on('close', () => {
-  console.log('🔴 MongoDB Atlas connection closed');
-});
-
-// Middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
-  credentials: true
+// 1. Security middleware first
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", process.env.FRONTEND_URL],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
 }));
 
-// Rate limiting - Make it more lenient
+// 2. CORS Configuration - SECURE FOR PRODUCTION
+app.use(cors({
+  origin: function (origin, callback) {
+    // In development, log CORS checks
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 CORS Check - Origin:', origin);
+    }
+    
+    // Allow requests with no origin (mobile apps, server-to-server, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Remove trailing slash from origin for comparison
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    
+    const allowedOrigins = [
+      // Development origins
+      ...(process.env.NODE_ENV === 'development' ? [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:3000'
+      ] : []),
+      // Production origins
+      'https://safarishare.netlify.app',
+      'https://safarishare-app.netlify.app',
+      process.env.FRONTEND_URL
+    ].filter(Boolean);
+    
+    // Check if normalized origin is in allowed list
+    if (allowedOrigins.includes(normalizedOrigin)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Origin allowed:', normalizedOrigin);
+      }
+      return callback(null, true);
+    }
+    
+    // Allow netlify.app subdomains in production
+    if (normalizedOrigin.endsWith('.netlify.app')) {
+      return callback(null, true);
+    }
+    
+    // Block unauthorized origins in production
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('🚫 CORS blocked origin:', normalizedOrigin);
+      return callback(new Error('Not allowed by CORS'));
+    }
+    
+    // Allow all in development
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  exposedHeaders: ['Content-Length'],
+  optionsSuccessStatus: 200,
+  preflightContinue: false
+}));
+
+// 3. Additional CORS headers middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  if (origin) {
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    res.header('Access-Control-Allow-Origin', normalizedOrigin);
+  }
+  
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    console.log('✅ Handling preflight request for:', req.url);
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
+
+// 4. Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 500, // Increased from 100 to 500 requests per windowMs
+  max: process.env.NODE_ENV === 'production' ? 100 : 500, // Stricter in production
   message: {
     error: 'Too many requests, please try again later.',
-    retryAfter: Math.ceil(15 * 60) // 15 minutes in seconds
+    retryAfter: Math.ceil(15 * 60)
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip rate limiting for certain routes during development
+  // No skipping in production
   skip: (req) => {
-    if (process.env.NODE_ENV === 'development') {
-      // Skip rate limiting for auth routes to prevent login issues
-      return req.path.startsWith('/api/auth/');
-    }
-    return false;
+    return process.env.NODE_ENV === 'development' && req.path.startsWith('/api/auth/');
   }
 });
 
-// Apply less restrictive rate limiting
 app.use(limiter);
 
+// 5. Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// 6. Request logging
+// Request logging - minimal in production
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log('Origin:', req.headers.origin);
+  }
+  next();
+});
+
+// Socket.IO Configuration
+const io = socketIo(server, {
+  cors: {
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      const allowedOrigins = [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'https://safarishare.netlify.app'
+      ];
+      
+      if (allowedOrigins.includes(normalizedOrigin) || normalizedOrigin.endsWith('.netlify.app')) {
+        return callback(null, true);
+      }
+      
+      return callback(null, true);
+    },
+    methods: ["GET", "POST"],
+    allowedHeaders: ["my-custom-header"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling']
+});
 
 // Initialize MongoDB Connection
 connectDB();
@@ -166,47 +244,42 @@ io.use((socket, next) => {
     next();
   } catch (err) {
     console.log('Socket auth error:', err.message);
-    // Allow connection even without auth, but don't set userId
     next();
   }
 });
 
-// Socket.io for real-time features
+// Socket.io connection handling
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id, 'User ID:', socket.userId);
+  if (process.env.NODE_ENV === 'development') {
+    console.log('User connected:', socket.id, 'User ID:', socket.userId);
+  }
 
-  // Join user to their personal room when they connect
   if (socket.userId) {
     socket.join(`user_${socket.userId}`);
-    console.log(`User ${socket.userId} joined their personal room`);
-    
-    // Notify user they're online
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`User ${socket.userId} joined their personal room`);
+    }
     socket.broadcast.emit('user-online', socket.userId);
   }
 
-  // Handle joining specific rooms (like ride rooms)
   socket.on('join-room', (roomId) => {
     socket.join(roomId);
     console.log(`Socket ${socket.id} joined room: ${roomId}`);
   });
 
-  // Handle leaving specific rooms
   socket.on('leave-room', (roomId) => {
     socket.leave(roomId);
     console.log(`Socket ${socket.id} left room: ${roomId}`);
   });
 
-  // Handle sending messages
   socket.on('send-message', (data) => {
     console.log('Message data received:', data);
     
-    // Validate message data
     if (!data.receiverId || !data.message) {
       console.error('Invalid message data:', data);
       return;
     }
 
-    // Emit to the receiver's personal room
     socket.to(`user_${data.receiverId}`).emit('new-message', {
       message: data.message,
       sender: data.sender,
@@ -216,7 +289,6 @@ io.on('connection', (socket) => {
     console.log(`Message sent from ${socket.userId} to user_${data.receiverId}`);
   });
 
-  // Handle sending notifications
   socket.on('send-notification', (data) => {
     console.log('Notification data:', data);
     
@@ -233,7 +305,6 @@ io.on('connection', (socket) => {
     console.log(`Notification sent to user_${data.userId}`);
   });
 
-  // Handle ride-specific events
   socket.on('join-ride', (rideId) => {
     socket.join(`ride_${rideId}`);
     console.log(`Socket ${socket.id} joined ride ${rideId}`);
@@ -244,12 +315,9 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} left ride ${rideId}`);
   });
 
-  // Handle booking updates
   socket.on('booking-update', (data) => {
-    // Notify all users in the ride room
     socket.to(`ride_${data.rideId}`).emit('booking-status-changed', data);
     
-    // Also notify specific users
     if (data.driverId) {
       socket.to(`user_${data.driverId}`).emit('booking-status-changed', data);
     }
@@ -258,7 +326,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle typing indicators
   socket.on('typing-start', (data) => {
     socket.to(`user_${data.receiverId}`).emit('user-typing', {
       userId: socket.userId,
@@ -273,22 +340,20 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle connection errors
   socket.on('error', (error) => {
     console.error('Socket error for user', socket.userId, ':', error);
   });
 
-  // Handle disconnect
   socket.on('disconnect', (reason) => {
-    console.log(`User disconnected: ${socket.id}, User ID: ${socket.userId}, Reason: ${reason}`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`User disconnected: ${socket.id}, User ID: ${socket.userId}, Reason: ${reason}`);
+    }
     
     if (socket.userId) {
-      // Notify others that user went offline
       socket.broadcast.emit('user-offline', socket.userId);
     }
   });
 
-  // Ping-pong for connection health
   socket.on('ping', () => {
     socket.emit('pong');
   });
@@ -300,7 +365,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Routes
+// ROUTES
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/rides', rideRoutes);
@@ -309,11 +374,12 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/driver', driverRoutes);
 
+// Basic route
 app.get('/', (req, res) => {
-  res.send({ message: "Backend is running ✅" });
+  res.json({ message: "SafariShare Backend is running ✅" });
 });
 
-// Health check with MongoDB status
+// Health check endpoints
 app.get('/api/health', (req, res) => {
   const dbStatus = mongoose.connection.readyState;
   const dbStatusText = {
@@ -337,7 +403,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Socket health check
 app.get('/api/socket/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -347,10 +412,8 @@ app.get('/api/socket/health', (req, res) => {
   });
 });
 
-// Database health check
 app.get('/api/db/health', async (req, res) => {
   try {
-    // Test database connection
     const adminDb = mongoose.connection.db.admin();
     const result = await adminDb.ping();
     
@@ -370,26 +433,95 @@ app.get('/api/db/health', async (req, res) => {
   }
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    message: 'Something went wrong!',
-    error: process.env.NODE_ENV === 'development' ? err.message : {}
+// Add these endpoints after your existing health check endpoints (around line 420):
+
+// Keep-alive endpoint for preventing sleep
+app.get('/keep-alive', (req, res) => {
+  const uptimeMinutes = Math.floor(process.uptime() / 60);
+  const uptimeHours = Math.floor(uptimeMinutes / 60);
+  const remainingMinutes = uptimeMinutes % 60;
+  
+  res.json({ 
+    message: 'Server is alive and healthy',
+    uptime: {
+      minutes: uptimeMinutes,
+      readable: uptimeHours > 0 ? `${uptimeHours}h ${remainingMinutes}m` : `${remainingMinutes}m`
+    },
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV,
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+    },
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    connections: io.engine.clientsCount
+  });
+});
+
+// Wake-up endpoint for cold starts
+app.get('/wake-up', (req, res) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🌅 Wake-up call received');
+  }
+  
+  res.json({ 
+    message: 'Backend is awake!',
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    ready: true
+  });
+});
+
+// Simple ping endpoint
+app.get('/ping', (req, res) => {
+  res.json({ 
+    pong: true, 
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime())
+  });
+});
+
+// Status endpoint with minimal info
+app.get('/status', (req, res) => {
+  res.json({ 
+    status: 'alive',
+    timestamp: new Date().toISOString()
   });
 });
 
 // 404 handler
 app.use('*', (req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+  console.log(`404 - Route not found: ${req.method} ${req.url}`);
+  res.status(404).json({ 
+    success: false,
+    message: 'Route not found',
+    path: req.url,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error occurred:', err);
+  console.error('Stack:', err.stack);
+  
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  
+  res.status(err.status || 500).json({ 
+    success: false,
+    message: isDevelopment ? err.message : 'Internal server error',
+    ...(isDevelopment && { stack: err.stack }),
+    timestamp: new Date().toISOString()
+  });
 });
 
 const PORT = process.env.PORT || 5001;
 
-// Start server only after database connection
+// Start server
 const startServer = async () => {
   try {
-    // Wait for database connection before starting server
     if (mongoose.connection.readyState === 0) {
       await connectDB();
     }
@@ -407,7 +539,7 @@ const startServer = async () => {
   }
 };
 
-// Graceful shutdown
+// Graceful shutdown handlers
 process.on('SIGTERM', () => {
   console.log('🔄 SIGTERM received, shutting down gracefully');
   server.close(() => {
@@ -430,89 +562,11 @@ process.on('SIGINT', () => {
   });
 });
 
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (err, promise) => {
   console.error('🔴 Unhandled Promise Rejection:', err.message);
-  // Close server & exit process
   server.close(() => {
     process.exit(1);
   });
-});
-
-// CORS configuration - IMPORTANT: Place this BEFORE other middleware
-app.use(cors({
-  origin: function (origin, callback) {
-    console.log('🔍 CORS Check - Origin:', origin);
-    
-    // Allow requests with no origin (mobile apps, server-to-server, etc.)
-    if (!origin) {
-      console.log('✅ No origin - allowing');
-      return callback(null, true);
-    }
-    
-    // Remove trailing slash from origin for comparison
-    const normalizedOrigin = origin.replace(/\/$/, '');
-    
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'https://safarishare.netlify.app',
-      'https://safarishare-app.netlify.app'
-    ];
-    
-    // Check if normalized origin is in allowed list
-    if (allowedOrigins.includes(normalizedOrigin)) {
-      console.log('✅ Origin allowed:', normalizedOrigin);
-      return callback(null, true);
-    }
-    
-    // Allow any netlify.app subdomain
-    if (normalizedOrigin.endsWith('.netlify.app')) {
-      console.log('✅ Netlify subdomain allowed:', normalizedOrigin);
-      return callback(null, true);
-    }
-    
-    // For development, allow all origins (remove this in production)
-    console.log('⚠️ Origin not in allowed list, but allowing anyway:', normalizedOrigin);
-    return callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With',
-    'Accept',
-    'Origin'
-  ],
-  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
-  optionsSuccessStatus: 200,
-  preflightContinue: false
-}));
-
-// Additional CORS headers middleware
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  
-  if (origin) {
-    // Remove trailing slash from origin
-    const normalizedOrigin = origin.replace(/\/$/, '');
-    res.header('Access-Control-Allow-Origin', normalizedOrigin);
-  } else {
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-  
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
-  
-  // Handle preflight
-  if (req.method === 'OPTIONS') {
-    console.log('✅ Handling preflight request');
-    return res.sendStatus(200);
-  }
-  
-  next();
 });
 
 // Start the server
