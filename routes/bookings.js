@@ -66,7 +66,6 @@ router.post('/', auth, async (req, res) => {
       seatsBooked: parseInt(seatsBooked),
       message: message || '',
       status: 'pending',
-      paymentStatus: 'pending',
       totalAmount: ride.pricePerSeat * seatsBooked
     });
 
