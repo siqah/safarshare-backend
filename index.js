@@ -309,6 +309,10 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/driver', driverRoutes);
 
+app.get('/', (req, res) => {
+  res.send({ message: "Backend is running ✅" });
+});
+
 // Health check with MongoDB status
 app.get('/api/health', (req, res) => {
   const dbStatus = mongoose.connection.readyState;
