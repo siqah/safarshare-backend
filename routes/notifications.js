@@ -1,13 +1,13 @@
 const express = require('express');
 const Notification = require('../models/Notification');
-const auth = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
 
 const router = express.Router();
 
 // Get all notifications for user
-router.get('/', auth, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
-    const notifications = await Notification.find({ userId: req.user._id })
+    const notifications = await Notification.find({ userId: req.clerkUser._id })
       .sort({ createdAt: -1 })
       .limit(100); // Limit to last 100 notifications
 
@@ -26,12 +26,12 @@ router.get('/', auth, async (req, res) => {
 });
 
 // Mark notification as read
-router.put('/:notificationId/read', auth, async (req, res) => {
+router.put('/:notificationId/read', requireAuth, async (req, res) => {
   try {
     const notification = await Notification.findOneAndUpdate(
       { 
         _id: req.params.notificationId, 
-        userId: req.user._id 
+        userId: req.clerkUser._id 
       },
       { read: true },
       { new: true }
@@ -58,10 +58,10 @@ router.put('/:notificationId/read', auth, async (req, res) => {
 });
 
 // Mark all notifications as read
-router.put('/mark-all-read', auth, async (req, res) => {
+router.put('/mark-all-read', requireAuth, async (req, res) => {
   try {
     await Notification.updateMany(
-      { userId: req.user._id, read: false },
+      { userId: req.clerkUser._id, read: false },
       { read: true }
     );
 
@@ -79,11 +79,11 @@ router.put('/mark-all-read', auth, async (req, res) => {
 });
 
 // Delete notification
-router.delete('/:notificationId', auth, async (req, res) => {
+router.delete('/:notificationId', requireAuth, async (req, res) => {
   try {
     const notification = await Notification.findOneAndDelete({
       _id: req.params.notificationId,
-      userId: req.user._id
+      userId: req.clerkUser._id
     });
 
     if (!notification) {
@@ -107,11 +107,11 @@ router.delete('/:notificationId', auth, async (req, res) => {
 });
 
 // Clear all notifications - Fix the route
-router.delete('/clear-all', auth, async (req, res) => {
+router.delete('/clear-all', requireAuth, async (req, res) => {
   try {
-    console.log('Clearing all notifications for user:', req.user._id);
+    console.log('Clearing all notifications for user:', req.clerkUser._id);
     
-    const result = await Notification.deleteMany({ userId: req.user._id });
+    const result = await Notification.deleteMany({ userId: req.clerkUser._id });
     
     console.log('Deleted notifications count:', result.deletedCount);
 
@@ -131,7 +131,7 @@ router.delete('/clear-all', auth, async (req, res) => {
 });
 
 // Create notification (for internal use)
-router.post('/', auth, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     const { userId, type, title, message, data, actionUrl } = req.body;
 

@@ -5,12 +5,17 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "NODE_ENV=development nodemon index.js --ignore uploads/",
+    "dev:debug": "NODE_ENV=development DEBUG=* nodemon index.js",
+    "test": "echo \"Add tests here\" && exit 0",
+    "lint": "echo \"Add linting here\" && exit 0"
   },
   "dependencies": {
+    "@clerk/clerk-sdk-node": "^4.13.23",
     "axios": "^1.11.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "express-rate-limit": "^6.10.0",
@@ -19,7 +24,10 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.8.7",
     "multer": "^2.0.2",
+    "nodemailer": "^7.0.5",
     "nodemon": "^3.1.10",
-    "socket.io": "^4.7.2"
+    "socket.io": "^4.7.2",
+    "svix": "^1.69.0",
+    "uuid": "^11.1.0"
   }
 }

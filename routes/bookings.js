@@ -1,8 +1,8 @@
 const express = require('express');
-const auth = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
 const Booking = require('../models/Booking');
 const Ride = require('../models/Ride');
-const User = require('../models/User');
+const ClerkUser = require('../models/ClerkUser');
 const {
   createBookingRequestNotification,
   createBookingAcceptedNotification,
@@ -13,13 +13,13 @@ const {
 const router = express.Router();
 
 // Create a booking
-router.post('/', auth, async (req, res) => {
-  console.log('Booking request received from user:', req.user._id);
+router.post('/', requireAuth, async (req, res) => {
+  console.log('Booking request received from user:', req.clerkUser._id);
   console.log('Request body:', req.body);
   
   try {
     const { rideId, seatsBooked, message } = req.body;
-    const passengerId = req.user._id;
+    const passengerId = req.clerkUser._id;
 
     // Validate input
     if (!rideId || !seatsBooked) {
@@ -83,7 +83,7 @@ router.post('/', auth, async (req, res) => {
       await createBookingRequestNotification(
         ride.driverId._id,
         rideId,
-        `${req.user.firstName} ${req.user.lastName}`,
+        `${req.clerkUser.firstName} ${req.clerkUser.lastName}`,
         req.io
       );
     } catch (notifError) {
@@ -107,9 +107,9 @@ router.post('/', auth, async (req, res) => {
 });
 
 // Get my bookings (as passenger)
-router.get('/my-bookings', auth, async (req, res) => {
+router.get('/my-bookings', requireAuth, async (req, res) => {
   try {
-    const bookings = await Booking.find({ passengerId: req.user._id })
+    const bookings = await Booking.find({ passengerId: req.clerkUser._id })
       .populate('rideId')
       .populate({
         path: 'rideId',
@@ -128,9 +128,9 @@ router.get('/my-bookings', auth, async (req, res) => {
 });
 
 // Get bookings for my rides (as driver)
-router.get('/ride-bookings', auth, async (req, res) => {
+router.get('/ride-bookings', requireAuth, async (req, res) => {
   try {
-    const rides = await Ride.find({ driverId: req.user._id }).select('_id');
+    const rides = await Ride.find({ driverId: req.clerkUser._id }).select('_id');
     const rideIds = rides.map(ride => ride._id);
 
     const bookings = await Booking.find({ rideId: { $in: rideIds } })
@@ -146,7 +146,7 @@ router.get('/ride-bookings', auth, async (req, res) => {
 });
 
 // Accept booking - Fix the notification creation
-router.put('/:bookingId/accept', auth, async (req, res) => {
+router.put('/:bookingId/accept', requireAuth, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.bookingId)
       .populate('rideId')
@@ -157,7 +157,7 @@ router.put('/:bookingId/accept', auth, async (req, res) => {
     }
 
     // Check if user is the driver of the ride
-    if (!booking.rideId.driverId.equals(req.user._id)) {
+    if (!booking.rideId.driverId.equals(req.clerkUser._id)) {
       return res.status(403).json({ message: 'Unauthorized' });
     }
 
@@ -185,7 +185,7 @@ router.put('/:bookingId/accept', auth, async (req, res) => {
       await createBookingAcceptedNotification(
         booking.passengerId._id,
         booking.rideId._id,
-        req.user.firstName + ' ' + req.user.lastName,
+        req.clerkUser.firstName + ' ' + req.clerkUser.lastName,
         req.io
       );
     } catch (notifError) {
@@ -208,7 +208,7 @@ router.put('/:bookingId/accept', auth, async (req, res) => {
 });
 
 // Decline booking - Fix similar issues
-router.put('/:bookingId/decline', auth, async (req, res) => {
+router.put('/:bookingId/decline', requireAuth, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.bookingId)
       .populate('rideId')
@@ -219,7 +219,7 @@ router.put('/:bookingId/decline', auth, async (req, res) => {
     }
 
     // Check if user is the driver of the ride
-    if (!booking.rideId.driverId.equals(req.user._id)) {
+    if (!booking.rideId.driverId.equals(req.clerkUser._id)) {
       return res.status(403).json({ message: 'Unauthorized' });
     }
 
@@ -235,7 +235,7 @@ router.put('/:bookingId/decline', auth, async (req, res) => {
       await createBookingDeclinedNotification(
         booking.passengerId._id,
         booking.rideId._id,
-        req.user.firstName + ' ' + req.user.lastName,
+        req.clerkUser.firstName + ' ' + req.clerkUser.lastName,
         req.io
       );
     } catch (notifError) {
@@ -258,7 +258,7 @@ router.put('/:bookingId/decline', auth, async (req, res) => {
 });
 
 // Cancel booking (by passenger)
-router.put('/:bookingId/cancel', auth, async (req, res) => {
+router.put('/:bookingId/cancel', requireAuth, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.bookingId).populate('rideId');
 
@@ -267,7 +267,7 @@ router.put('/:bookingId/cancel', auth, async (req, res) => {
     }
 
     // Check if user is the passenger
-    if (!booking.passengerId.equals(req.user._id)) {
+    if (!booking.passengerId.equals(req.clerkUser._id)) {
       return res.status(403).json({ message: 'Unauthorized' });
     }
 
@@ -296,10 +296,10 @@ router.put('/:bookingId/cancel', auth, async (req, res) => {
 });
 
 // Get pending booking requests (for drivers)
-router.get('/requests', auth, async (req, res) => {
+router.get('/requests', requireAuth, async (req, res) => {
   try {
     // Find all rides by this driver
-    const rides = await Ride.find({ driverId: req.user._id }).select('_id');
+    const rides = await Ride.find({ driverId: req.clerkUser._id }).select('_id');
     const rideIds = rides.map(ride => ride._id);
 
     // Find all pending booking requests for these rides

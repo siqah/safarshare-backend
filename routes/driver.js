@@ -2,9 +2,9 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const auth = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
 const DriverApplication = require('../models/DriverApplication');
-const User = require('../models/User');
+const ClerkUser = require('../models/ClerkUser');
 const { createNotification } = require('../utils/notifications');
 
 const router = express.Router();
@@ -44,7 +44,7 @@ const upload = multer({
 });
 
 // Submit driver application
-router.post('/apply', auth, upload.fields([
+router.post('/apply', requireAuth, upload.fields([
   { name: 'license', maxCount: 1 },
   { name: 'registration', maxCount: 1 },
   { name: 'insurance', maxCount: 1 }
@@ -53,7 +53,7 @@ router.post('/apply', auth, upload.fields([
     const { licenseNumber, licenseExpiry, vehicleInfo } = req.body;
 
     // Check if user already has an application
-    const existingApplication = await DriverApplication.findOne({ userId: req.user._id });
+    const existingApplication = await DriverApplication.findOne({ userId: req.clerkUser._id });
     if (existingApplication) {
       return res.status(400).json({
         success: false,
@@ -85,7 +85,7 @@ router.post('/apply', auth, upload.fields([
 
     // Create application
     const application = new DriverApplication({
-      userId: req.user._id,
+      userId: req.clerkUser._id,
       licenseNumber,
       licenseExpiry: expiryDate,
       vehicleInfo: parsedVehicleInfo,
@@ -105,7 +105,7 @@ router.post('/apply', auth, upload.fields([
 
     // Create notification for admins (you can implement admin notification system)
     // For now, just log it
-    console.log(`New driver application submitted by ${req.user.firstName} ${req.user.lastName}`);
+    console.log(`New driver application submitted by ${req.clerkUser.firstName} ${req.clerkUser.lastName}`);
 
     res.status(201).json({
       success: true,
@@ -134,9 +134,9 @@ router.post('/apply', auth, upload.fields([
 });
 
 // Get user's driver application
-router.get('/application', auth, async (req, res) => {
+router.get('/application', requireAuth, async (req, res) => {
   try {
-    const application = await DriverApplication.findOne({ userId: req.user._id });
+    const application = await DriverApplication.findOne({ userId: req.clerkUser._id });
 
     if (!application) {
       return res.status(404).json({
@@ -160,11 +160,11 @@ router.get('/application', auth, async (req, res) => {
 });
 
 // Update driver application (only for pending applications)
-router.put('/application/:applicationId', auth, async (req, res) => {
+router.put('/application/:applicationId', requireAuth, async (req, res) => {
   try {
     const application = await DriverApplication.findOne({
       _id: req.params.applicationId,
-      userId: req.user._id
+      userId: req.clerkUser._id
     });
 
     if (!application) {
@@ -210,7 +210,7 @@ router.put('/application/:applicationId', auth, async (req, res) => {
 });
 
 // Admin: Get all applications (for admin panel)
-router.get('/applications', auth, async (req, res) => {
+router.get('/applications', requireAuth, async (req, res) => {
   try {
     // This would typically have admin role checking
     const { status, page = 1, limit = 10 } = req.query;
@@ -249,7 +249,7 @@ router.get('/applications', auth, async (req, res) => {
 });
 
 // Admin: Review application
-router.put('/application/:applicationId/review', auth, async (req, res) => {
+router.put('/application/:applicationId/review', requireAuth, async (req, res) => {
   try {
     const { status, reviewNotes } = req.body;
 
@@ -280,7 +280,7 @@ router.put('/application/:applicationId/review', auth, async (req, res) => {
     // Update application
     application.status = status;
     application.reviewedAt = new Date();
-    application.reviewedBy = req.user._id;
+    application.reviewedBy = req.clerkUser._id;
     application.reviewNotes = reviewNotes;
     await application.save();
 
