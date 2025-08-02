@@ -5,7 +5,6 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
 const socketIo = require('socket.io');
-const jwt = require('jsonwebtoken');
 
 // Load environment variables based on NODE_ENV
 const envFile = process.env.NODE_ENV === 'development' ? '.env.development' : '.env';
@@ -253,14 +252,16 @@ const io = socketIo(server, {
 // Initialize MongoDB Connection
 connectDB();
 
-// Socket.IO authentication middleware
-io.use((socket, next) => {
+// Socket.IO authentication middleware (using Clerk)
+io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth.token;
     if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      socket.userId = decoded.userId;
-      console.log(`User ${decoded.userId} authenticated for socket ${socket.id}`);
+      // Verify Clerk token
+      const { clerkClient } = require('@clerk/clerk-sdk-node');
+      const sessionToken = await clerkClient.verifyToken(token);
+      socket.userId = sessionToken.sub;
+      console.log(`User ${sessionToken.sub} authenticated for socket ${socket.id}`);
     }
     next();
   } catch (err) {
@@ -546,7 +547,8 @@ if (isDevelopment) {
       FRONTEND_URL: process.env.FRONTEND_URL,
       LOG_LEVEL: process.env.LOG_LEVEL,
       MONGODB_URI: process.env.MONGODB_URI ? '***SET***' : '***NOT SET***',
-      JWT_SECRET: process.env.JWT_SECRET ? '***SET***' : '***NOT SET***'
+      CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY ? '***SET***' : '***NOT SET***',
+      CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY ? '***SET***' : '***NOT SET***'
     };
     res.json({ environment: safeEnvVars });
   });
