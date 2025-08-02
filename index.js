@@ -6,10 +6,20 @@ const rateLimit = require('express-rate-limit');
 const http = require('http');
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
 
-const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/users');
+// Load environment variables based on NODE_ENV
+const envFile = process.env.NODE_ENV === 'development' ? '.env.development' : '.env';
+require('dotenv').config({ path: envFile });
+
+// Development logging
+const isDevelopment = process.env.NODE_ENV === 'development';
+if (isDevelopment) {
+  console.log('🔧 Development mode enabled');
+  console.log('📁 Loaded env file:', envFile);
+}
+
+const clerkRoutes = require('./routes/clerk');
+const clerkUserRoutes = require('./routes/clerkUsers');
 const rideRoutes = require('./routes/rides');
 const bookingRoutes = require('./routes/bookings');
 const messageRoutes = require('./routes/messages');
@@ -101,11 +111,17 @@ app.use(cors({
     const normalizedOrigin = origin.replace(/\/$/, '');
     
     const allowedOrigins = [
-      // Development origins
-      ...(process.env.NODE_ENV === 'development' ? [
+      // Development origins - auto-detect common Vite ports
+      ...(isDevelopment ? [
         'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:3000'
+        'http://localhost:5174', 
+        'http://localhost:5175',
+        'http://localhost:5176',
+        'http://localhost:5177',
+        'http://localhost:3000',
+        'http://localhost:3001',
+        process.env.CLIENT_URL,
+        process.env.FRONTEND_URL
       ] : []),
       // Production origins
       'https://safarishare.netlify.app',
@@ -171,19 +187,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// 4. Rate limiting
+// 4. Rate limiting - more relaxed in development
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 100 : 500, // Stricter in production
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes default
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || (isDevelopment ? 1000 : 100),
   message: {
     error: 'Too many requests, please try again later.',
     retryAfter: Math.ceil(15 * 60)
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // No skipping in production
+  // Skip rate limiting for auth routes in development
   skip: (req) => {
-    return process.env.NODE_ENV === 'development' && req.path.startsWith('/api/auth/');
+    return isDevelopment && (
+      req.path.startsWith('/api/auth/') || 
+      req.path.startsWith('/api/health') ||
+      req.path.startsWith('/keep-alive') ||
+      req.path.startsWith('/ping')
+    );
   }
 });
 
@@ -366,8 +387,9 @@ app.use((req, res, next) => {
 });
 
 // ROUTES
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
+// Routes
+app.use('/api', clerkRoutes); // Clerk webhooks
+app.use('/api/users', clerkUserRoutes); // Clerk user management
 app.use('/api/rides', rideRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
@@ -489,6 +511,68 @@ app.get('/status', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Development-only debug endpoints
+if (isDevelopment) {
+  // Debug endpoint to see all routes
+  app.get('/api/debug/routes', (req, res) => {
+    const routes = [];
+    app._router.stack.forEach((middleware) => {
+      if (middleware.route) {
+        routes.push({
+          path: middleware.route.path,
+          methods: Object.keys(middleware.route.methods)
+        });
+      } else if (middleware.name === 'router') {
+        middleware.handle.stack.forEach((handler) => {
+          if (handler.route) {
+            routes.push({
+              path: middleware.regexp.source.replace('\\/?(?=\\/|$)', '') + handler.route.path,
+              methods: Object.keys(handler.route.methods)
+            });
+          }
+        });
+      }
+    });
+    res.json({ routes });
+  });
+
+  // Debug endpoint to see environment variables (safe ones only)
+  app.get('/api/debug/env', (req, res) => {
+    const safeEnvVars = {
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: process.env.PORT,
+      CLIENT_URL: process.env.CLIENT_URL,
+      FRONTEND_URL: process.env.FRONTEND_URL,
+      LOG_LEVEL: process.env.LOG_LEVEL,
+      MONGODB_URI: process.env.MONGODB_URI ? '***SET***' : '***NOT SET***',
+      JWT_SECRET: process.env.JWT_SECRET ? '***SET***' : '***NOT SET***'
+    };
+    res.json({ environment: safeEnvVars });
+  });
+
+  // Debug endpoint to test database connection
+  app.get('/api/debug/db', async (req, res) => {
+    try {
+      const collections = await mongoose.connection.db.listCollections().toArray();
+      const stats = await mongoose.connection.db.stats();
+      
+      res.json({
+        connectionState: mongoose.connection.readyState,
+        host: mongoose.connection.host,
+        database: mongoose.connection.name,
+        collections: collections.map(c => c.name),
+        stats: {
+          documents: stats.objects,
+          dataSize: `${Math.round(stats.dataSize / 1024 / 1024 * 100) / 100}MB`,
+          storageSize: `${Math.round(stats.storageSize / 1024 / 1024 * 100) / 100}MB`
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+}
 
 // 404 handler
 app.use('*', (req, res) => {

@@ -1,14 +1,14 @@
 const express = require('express');
 const Message = require('../models/Message');
 const Booking = require('../models/Booking');
-const User = require('../models/User');
-const auth = require('../middleware/auth');
+const ClerkUser = require('../models/ClerkUser');
+const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
 const { createMessageNotification } = require('../utils/notifications');
 
 const router = express.Router();
 
 // Send a message
-router.post('/', auth, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     const { receiverId, content, bookingId, rideId } = req.body;
 
@@ -40,8 +40,8 @@ router.post('/', auth, async (req, res) => {
       }
 
       // Check if current user is either the passenger or the driver
-      const isPassenger = booking.passengerId._id.toString() === req.user._id.toString();
-      const isDriver = booking.rideId.driverId._id.toString() === req.user._id.toString();
+      const isPassenger = booking.passengerId._id.toString() === req.clerkUser._id.toString();
+      const isDriver = booking.rideId.driverId._id.toString() === req.clerkUser._id.toString();
 
       if (!isPassenger && !isDriver) {
         return res.status(403).json({ 
@@ -61,7 +61,7 @@ router.post('/', auth, async (req, res) => {
     }
 
     const message = new Message({
-      senderId: req.user._id,
+      senderId: req.clerkUser._id,
       receiverId,
       content: content.trim(),
       bookingId,
@@ -107,14 +107,14 @@ router.post('/', auth, async (req, res) => {
 });
 
 // Get conversation between two users
-router.get('/conversation/:userId', auth, async (req, res) => {
+router.get('/conversation/:userId', requireAuth, async (req, res) => {
   try {
     const { userId } = req.params;
 
     const messages = await Message.find({
       $or: [
-        { senderId: req.user._id, receiverId: userId },
-        { senderId: userId, receiverId: req.user._id }
+        { senderId: req.clerkUser._id, receiverId: userId },
+        { senderId: userId, receiverId: req.clerkUser._id }
       ]
     })
       .populate('senderId', 'firstName lastName avatar')
@@ -125,7 +125,7 @@ router.get('/conversation/:userId', auth, async (req, res) => {
     await Message.updateMany(
       { 
         senderId: userId, 
-        receiverId: req.user._id, 
+        receiverId: req.clerkUser._id, 
         read: false 
       },
       { read: true }
@@ -145,9 +145,9 @@ router.get('/conversation/:userId', auth, async (req, res) => {
 });
 
 // Get all conversations for a user
-router.get('/conversations', auth, async (req, res) => {
+router.get('/conversations', requireAuth, async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.clerkUser._id;
     
     // Get all messages where user is sender or receiver
     const messages = await Message.find({
@@ -203,10 +203,10 @@ router.get('/conversations', auth, async (req, res) => {
 });
 
 // Mark message as read
-router.put('/:messageId/read', auth, async (req, res) => {
+router.put('/:messageId/read', requireAuth, async (req, res) => {
   try {
     const messageId = req.params.messageId;
-    const userId = req.user._id;
+    const userId = req.clerkUser._id;
 
     const message = await Message.findOneAndUpdate(
       { 
@@ -239,10 +239,10 @@ router.put('/:messageId/read', auth, async (req, res) => {
 });
 
 // Get messages for a specific booking
-router.get('/booking/:bookingId', auth, async (req, res) => {
+router.get('/booking/:bookingId', requireAuth, async (req, res) => {
   try {
     const { bookingId } = req.params;
-    const userId = req.user._id;
+    const userId = req.clerkUser._id;
 
     // Verify user is part of this booking
     const booking = await Booking.findOne({

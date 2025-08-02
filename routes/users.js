@@ -1,8 +1,7 @@
 const express = require('express');
-const { body, validationResult } = require('express-validator');
-const User = require('../models/User');
-const auth = require('../middleware/auth');
-
+const { clerkClient } = require('@clerk/clerk-sdk-node');
+const User = require('../models/ClerkUser');
+const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
 const router = express.Router();
 
 // Get user profile
