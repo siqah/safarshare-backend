@@ -151,4 +151,31 @@ router.get('/:userId', optionalAuth, async (req, res) => {
   }
 });
 
+// Sync user data with Clerk (for frontend calls)
+router.post('/sync', requireAuth, async (req, res) => {
+  try {
+    console.log('🔄 Manual sync requested for user:', req.auth.userId);
+    
+    const user = await getOrCreateUser(req.auth.userId);
+    
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+    
+    console.log('✅ User sync completed:', user.email);
+    
+    res.json({
+      success: true,
+      user,
+      message: 'User synced successfully'
+    });
+  } catch (error) {
+    console.error('❌ User sync error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error syncing user data'
+    });
+  }
+});
+
 module.exports = router;
