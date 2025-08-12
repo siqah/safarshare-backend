@@ -390,7 +390,7 @@ app.use((req, res, next) => {
 // ROUTES
 // Routes
 app.use('/api', clerkRoutes); // Clerk webhooks
-app.use('/api/users', clerkUserRoutes); // Clerk user management
+app.use('/api/clerkUsers', clerkUserRoutes); // Clerk user management
 app.use('/api/rides', rideRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
