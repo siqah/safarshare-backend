@@ -3,7 +3,6 @@ name: Keep SafariShare Backend Alive
 on:
   schedule:
     # Ping every 10 minutes (cron format: minute hour day month weekday)
-    # This runs at minutes 0, 10, 20, 30, 40, 50 of every hour
     - cron: '*/10 * * * *'
   
   # Allow manual trigger from GitHub UI
@@ -14,89 +13,56 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 🏓 Ping SafariShare Backend
+    - name: 🚀 Ping Primary Backend Endpoint
+      id: primary_ping # Give this step an ID to reference its status
       run: |
         echo "🚀 Starting keep-alive ping for SafariShare Backend..."
         echo "⏰ Current time: $(date)"
         
-        # Primary keep-alive endpoint
-        echo "📡 Pinging keep-alive endpoint..."
-        response=$(curl -s -o /dev/null -w "%{http_code}" \
+        # Ping the primary keep-alive endpoint and capture the HTTP status code
+        # -s: silent, -o /dev/null: discard output, -w "%{http_code}": write HTTP code
+        # --max-time 30: timeout after 30 seconds
+        response_code=$(curl -s -o /dev/null -w "%{http_code}" \
           -H "User-Agent: GitHub-Actions-KeepAlive/1.0" \
           --max-time 30 \
           https://safarshare-backend.onrender.com/keep-alive)
         
-        echo "📊 Keep-alive response code: $response"
+        echo "📊 Keep-alive response code: $response_code"
         
-        if [ $response -eq 200 ]; then
+        # If the response is not 200, fail the step immediately.
+        # This makes the workflow's state clear.
+        if [ "$response_code" -ne 200 ]; then
+          echo "❌ Primary backend ping failed with HTTP code: $response_code"
+          exit 1 # This will cause the step and thus the job to fail
+        else
           echo "✅ Backend is alive and healthy!"
-          
-          # Get detailed status
-          echo "📋 Getting detailed status..."
-          curl -s -H "User-Agent: GitHub-Actions-KeepAlive/1.0" \
-            --max-time 15 \
-            https://safarshare-backend.onrender.com/keep-alive | \
-            jq -r '"🕐 Uptime: " + .uptime.readable + " | 💾 Memory: " + .memory.used + " | 🔗 Connections: " + (.connections|tostring)' || \
-            echo "📊 Status retrieved successfully"
-            
-        else
-          echo "⚠️ Keep-alive failed with code: $response"
-          echo "🔄 Attempting wake-up call..."
-          
-          # Try wake-up endpoint
-          wake_response=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "User-Agent: GitHub-Actions-KeepAlive/1.0" \
-            --max-time 60 \
-            https://safarshare-backend.onrender.com/wake-up)
-          
-          echo "🌅 Wake-up response code: $wake_response"
-          
-          if [ $wake_response -eq 200 ]; then
-            echo "✅ Backend successfully awakened!"
-          else
-            echo "❌ Wake-up failed. Backend may need manual intervention."
-            
-            # Try simple ping as last resort
-            echo "🏓 Trying simple ping..."
-            ping_response=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "User-Agent: GitHub-Actions-KeepAlive/1.0" \
-              --max-time 30 \
-              https://safarshare-backend.onrender.com/ping)
-            
-            echo "🏓 Ping response code: $ping_response"
-          fi
         fi
-        
-        echo "🏁 Keep-alive job completed at $(date)"
 
-    - name: Verify Backend Health
-      if: success()
+    - name: 🏥 Verify Backend Health (Deeper Check)
       run: |
-        echo "🔍 Performing health verification..."
+        echo "🔍 Performing deeper health verification..."
+        # Give the backend a moment to fully initialize if it just woke up.
+        sleep 5 
         
-        # Wait a moment for backend to be fully ready
-        sleep 5
-        
-        # Test critical endpoints
-        echo "🧪 Testing health endpoint..."
-        health_status=$(curl -s -o /dev/null -w "%{http_code}" \
+        health_status_code=$(curl -s -o /dev/null -w "%{http_code}" \
           --max-time 20 \
-          https://safarshare-backend.onrender.com/api/health)
+          https://safarshare-backend.onrender.com/api/health) # Assuming a more comprehensive health endpoint
         
-        echo "🏥 Health endpoint status: $health_status"
+        echo "🏥 Health endpoint status: $health_status_code"
         
-        if [ $health_status -eq 200 ]; then
-          echo "✅ All systems operational!"
+        if [ "$health_status_code" -ne 200 ]; then
+          echo "⚠️ Health check returned non-200 status: $health_status_code"
+          exit 1 # Fail if the deeper health check isn't successful
         else
-          echo "⚠️ Health check returned: $health_status"
+          echo "✅ All critical systems operational!"
         fi
 
     - name: 📝 Log Summary
-      if: always()
+      if: always() # This step will always run, regardless of previous step failures
       run: |
         echo "======================================"
         echo "🎯 SafariShare Backend Keep-Alive Summary"
-        echo "⏰ Execution time: $(date)"
+        echo "⏰ Job completed at $(date)"
         echo "🌐 Target: https://safarshare-backend.onrender.com"
-        echo "🔄 Next run: In 10 minutes"
+        echo "🔄 Next scheduled run: In 10 minutes"
         echo "======================================"
