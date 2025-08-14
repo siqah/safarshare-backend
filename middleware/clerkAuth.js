@@ -45,41 +45,77 @@ const syncClerkUser = async (userId) => {
   }
 };
 
+// Build verify options once
+const buildVerifyOptions = () => {
+  const authorizedParties = [
+    process.env.FRONTEND_URL,
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:3000',
+  ].filter(Boolean);
+
+  return {
+    secretKey: process.env.CLERK_SECRET_KEY,
+    authorizedParties,
+  };
+};
+
 // Enhanced middleware to require authentication and sync user
 const requireAuth = async (req, res, next) => {
   try {
-    // First, use Clerk's built-in auth
-    await new Promise((resolve, reject) => {
-      ClerkExpressRequireAuth({
-        onError: (error) => {
-          console.error('❌ Clerk authentication error:', error);
-          return reject(new Error('Authentication required'));
-        }
-      })(req, res, (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+    const authHeader = (req.headers.authorization || req.headers.Authorization || '').toString();
+    const altHeader = req.headers['x-clerk-auth'];
 
-    // If auth successful, sync user data
-    if (req.auth && req.auth.userId) {
+    let userId = null;
+
+    // Try local token verification first (supports both Session tokens and JWT templates)
+    if ((authHeader && authHeader.startsWith('Bearer ')) || altHeader) {
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : altHeader;
       try {
-        const clerkUser = await syncClerkUser(req.auth.userId);
-        req.clerkUser = clerkUser;
-        next();
-      } catch (syncError) {
-        console.error('❌ User sync failed:', syncError);
-        return res.status(500).json({
-          success: false,
-          message: 'User synchronization failed'
-        });
+        const payload = await clerkClient.verifyToken(token, buildVerifyOptions());
+        userId = payload.sub;
+      } catch (err) {
+        console.warn('⚠️ Local token verification failed, falling back to Clerk middleware:', err?.message || err);
       }
-    } else {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
     }
+
+    // If local verification failed or no token, fall back to Clerk's Express middleware (session introspection)
+    if (!userId) {
+      await new Promise((resolve, reject) => {
+        ClerkExpressRequireAuth({
+          onError: (error) => {
+            console.error('❌ Clerk session authentication error:', error?.message || error);
+            return reject(error);
+          }
+        })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      // Clerk middleware should set req.auth
+      if (req.auth && req.auth.userId) {
+        userId = req.auth.userId;
+      }
+    }
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    // Ensure req.auth is set
+    req.auth = { userId };
+
+    // Sync user data
+    try {
+      const clerkUser = await syncClerkUser(userId);
+      req.clerkUser = clerkUser;
+    } catch (syncError) {
+      console.error('❌ User sync failed:', syncError);
+      return res.status(500).json({ success: false, message: 'User synchronization failed' });
+    }
+
+    return next();
   } catch (error) {
     console.error('❌ Auth middleware error:', error);
     return res.status(401).json({
@@ -92,7 +128,7 @@ const requireAuth = async (req, res, next) => {
 // Middleware to optionally get user (doesn't require auth)
 const optionalAuth = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    const authHeader = (req.headers.authorization || '').toString();
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       req.auth = null;
       req.clerkUser = null;
@@ -103,7 +139,7 @@ const optionalAuth = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     
     try {
-      const payload = await clerkClient.verifyToken(token);
+      const payload = await clerkClient.verifyToken(token, buildVerifyOptions());
       req.auth = { userId: payload.sub };
       
       // Try to sync user data

@@ -28,6 +28,20 @@ const driverRoutes = require('./routes/driver');
 const app = express();
 const server = http.createServer(app);
 
+// Helper to build Clerk verify options
+const buildClerkVerifyOptions = () => {
+  const authorizedParties = [
+    process.env.FRONTEND_URL,
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:3000',
+  ].filter(Boolean);
+  return {
+    secretKey: process.env.CLERK_SECRET_KEY,
+    authorizedParties,
+  };
+};
+
 // MongoDB Atlas Connection Function
 const connectDB = async () => {
   try {
@@ -157,7 +171,8 @@ app.use(cors({
     'Authorization', 
     'X-Requested-With',
     'Accept',
-    'Origin'
+    'Origin',
+    'X-Clerk-Auth'
   ],
   exposedHeaders: ['Content-Length'],
   optionsSuccessStatus: 200,
@@ -175,7 +190,7 @@ app.use((req, res, next) => {
   
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Clerk-Auth');
   
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
@@ -257,11 +272,11 @@ io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth.token;
     if (token) {
-      // Verify Clerk token
+      // Verify Clerk token with proper options
       const { clerkClient } = require('@clerk/clerk-sdk-node');
-      const sessionToken = await clerkClient.verifyToken(token);
-      socket.userId = sessionToken.sub;
-      console.log(`User ${sessionToken.sub} authenticated for socket ${socket.id}`);
+      const payload = await clerkClient.verifyToken(token, buildClerkVerifyOptions());
+      socket.userId = payload.sub;
+      console.log(`User ${payload.sub} authenticated for socket ${socket.id}`);
     }
     next();
   } catch (err) {
