@@ -50,20 +50,6 @@ const driverApplicationSchema = new mongoose.Schema({
       max: 8
     }
   },
-  documents: {
-    license: {
-      type: String,
-      required: true
-    },
-    registration: {
-      type: String,
-      required: true
-    },
-    insurance: {
-      type: String,
-      required: true
-    }
-  },
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],

@@ -1,7 +1,4 @@
 const express = require('express');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
 const DriverApplication = require('../models/DriverApplication');
 const ClerkUser = require('../models/ClerkUser');
@@ -9,46 +6,8 @@ const { createNotification } = require('../utils/notifications');
 
 const router = express.Router();
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = 'uploads/documents';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Only images (JPEG, JPG, PNG) and PDF files are allowed'));
-    }
-  }
-});
-
-// Submit driver application
-router.post('/apply', requireAuth, upload.fields([
-  { name: 'license', maxCount: 1 },
-  { name: 'registration', maxCount: 1 },
-  { name: 'insurance', maxCount: 1 }
-]), async (req, res) => {
+// Submit driver application (JSON only, no file uploads)
+router.post('/apply', requireAuth, async (req, res) => {
   try {
     const { licenseNumber, licenseExpiry, vehicleInfo } = req.body;
 
@@ -61,25 +20,15 @@ router.post('/apply', requireAuth, upload.fields([
       });
     }
 
-    // Validate required files
-    if (!req.files?.license || !req.files?.registration || !req.files?.insurance) {
-      return res.status(400).json({
-        success: false,
-        message: 'All documents (license, registration, insurance) are required'
-      });
-    }
-
     // Parse vehicle info
-    const parsedVehicleInfo = typeof vehicleInfo === 'string' 
-      ? JSON.parse(vehicleInfo) 
-      : vehicleInfo;
+    const parsedVehicleInfo = typeof vehicleInfo === 'string' ? JSON.parse(vehicleInfo) : vehicleInfo;
 
     // Validate license expiry
     const expiryDate = new Date(licenseExpiry);
-    if (expiryDate <= new Date()) {
+    if (isNaN(expiryDate.getTime()) || expiryDate <= new Date()) {
       return res.status(400).json({
         success: false,
-        message: 'License expiry date must be in the future'
+        message: 'License expiry date must be a valid future date'
       });
     }
 
@@ -89,11 +38,6 @@ router.post('/apply', requireAuth, upload.fields([
       licenseNumber,
       licenseExpiry: expiryDate,
       vehicleInfo: parsedVehicleInfo,
-      documents: {
-        license: req.files.license[0].filename,
-        registration: req.files.registration[0].filename,
-        insurance: req.files.insurance[0].filename
-      },
       status: 'pending'
     });
 
@@ -115,15 +59,6 @@ router.post('/apply', requireAuth, upload.fields([
 
   } catch (error) {
     console.error('Driver application error:', error);
-    
-    // Clean up uploaded files if there was an error
-    if (req.files) {
-      Object.values(req.files).flat().forEach(file => {
-        fs.unlink(file.path, (err) => {
-          if (err) console.error('Error deleting file:', err);
-        });
-      });
-    }
 
     res.status(500).json({
       success: false,
@@ -187,7 +122,7 @@ router.put('/application/:applicationId', requireAuth, async (req, res) => {
     
     allowedUpdates.forEach(field => {
       if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+        updates[field] = field === 'licenseExpiry' ? new Date(req.body[field]) : req.body[field];
       }
     });
 
@@ -286,7 +221,7 @@ router.put('/application/:applicationId/review', requireAuth, async (req, res) =
 
     // Update user's isDriver status if approved
     if (status === 'approved') {
-      await User.findByIdAndUpdate(application.userId._id, { isDriver: true });
+      await ClerkUser.findByIdAndUpdate(application.userId._id, { isDriver: true });
     }
 
     // Create notification for user
