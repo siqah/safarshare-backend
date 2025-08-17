@@ -17,7 +17,7 @@ const syncClerkUser = async (userId) => {
         email: clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress,
         firstName: clerkUser.firstName || '',
         lastName: clerkUser.lastName || '',
-        avatar: clerkUser.imageUrl || '',
+        profileImageUrl: clerkUser.imageUrl || '',
         createdAt: new Date(clerkUser.createdAt),
         updatedAt: new Date()
       });
@@ -29,7 +29,7 @@ const syncClerkUser = async (userId) => {
         email: clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress,
         firstName: clerkUser.firstName || '',
         lastName: clerkUser.lastName || '',
-        avatar: clerkUser.imageUrl || '',
+        profileImageUrl: clerkUser.imageUrl || '',
         updatedAt: new Date()
       };
       
@@ -47,17 +47,36 @@ const syncClerkUser = async (userId) => {
 
 // Build verify options once
 const buildVerifyOptions = () => {
+  // Allow configuring additional authorized parties via env (comma separated)
+  const envParties = (process.env.CLERK_AUTHORIZED_PARTIES || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
   const authorizedParties = [
     process.env.FRONTEND_URL,
+    process.env.CLIENT_URL,
+    // Common local dev ports
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:3000',
+    // Known production frontend hosts
+    'https://safarishare.netlify.app', // with "i"
+    'https://safarshare.netlify.app',  // without "i" (typo variant observed)
+    'https://safarishare-app.netlify.app',
+    ...envParties,
   ].filter(Boolean);
 
-  return {
+  const options = {
     secretKey: process.env.CLERK_SECRET_KEY,
-    authorizedParties,
   };
+
+  // Optionally skip AZP check if instructed (useful to quickly mitigate prod 401s)
+  if (String(process.env.CLERK_SKIP_AZP_CHECK || '').toLowerCase() !== 'true') {
+    options.authorizedParties = authorizedParties;
+  }
+
+  return options;
 };
 
 // Enhanced middleware to require authentication and sync user
@@ -128,15 +147,18 @@ const requireAuth = async (req, res, next) => {
 // Middleware to optionally get user (doesn't require auth)
 const optionalAuth = async (req, res, next) => {
   try {
-    const authHeader = (req.headers.authorization || '').toString();
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const authHeader = (req.headers.authorization || req.headers.Authorization || '').toString();
+    const altHeader = req.headers['x-clerk-auth'];
+    const hasBearer = authHeader && authHeader.startsWith('Bearer ');
+
+    if (!hasBearer && !altHeader) {
       req.auth = null;
       req.clerkUser = null;
       return next();
     }
 
     // If there's a token, try to verify it
-    const token = authHeader.split(' ')[1];
+    const token = hasBearer ? authHeader.split(' ')[1] : altHeader;
     
     try {
       const payload = await clerkClient.verifyToken(token, buildVerifyOptions());
