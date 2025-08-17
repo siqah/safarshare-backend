@@ -23,23 +23,38 @@ const rideRoutes = require('./routes/rides');
 const bookingRoutes = require('./routes/bookings');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
-const driverRoutes = require('./routes/driver');
+// Removed legacy driver application routes
+const accountRoutes = require('./routes/account');
 
 const app = express();
 const server = http.createServer(app);
 
 // Helper to build Clerk verify options
 const buildClerkVerifyOptions = () => {
+  // Allow configuring additional authorized parties via env (comma separated)
+  const envParties = (process.env.CLERK_AUTHORIZED_PARTIES || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
   const authorizedParties = [
     process.env.FRONTEND_URL,
+    process.env.CLIENT_URL,
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:3000',
+    'https://safarishare.netlify.app',
+    'https://safarshare.netlify.app',
+    'https://safarishare-app.netlify.app',
+    ...envParties,
   ].filter(Boolean);
-  return {
+  const options = {
     secretKey: process.env.CLERK_SECRET_KEY,
-    authorizedParties,
   };
+  if (String(process.env.CLERK_SKIP_AZP_CHECK || '').toLowerCase() !== 'true') {
+    options.authorizedParties = authorizedParties;
+  }
+  return options;
 };
 
 // MongoDB Atlas Connection Function
@@ -258,7 +273,7 @@ const io = socketIo(server, {
       return callback(null, true);
     },
     methods: ["GET", "POST"],
-    allowedHeaders: ["my-custom-header"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Clerk-Auth"],
     credentials: true
   },
   transports: ['websocket', 'polling']
@@ -410,7 +425,8 @@ app.use('/api/rides', rideRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/driver', driverRoutes);
+// Removed: app.use('/api/driver', driverRoutes);
+app.use('/api/account', accountRoutes);
 
 // Basic route
 app.get('/', (req, res) => {
@@ -543,7 +559,7 @@ if (isDevelopment) {
         middleware.handle.stack.forEach((handler) => {
           if (handler.route) {
             routes.push({
-              path: middleware.regexp.source.replace('\\/?(?=\\/|$)', '') + handler.route.path,
+              path: middleware.regexp.source.replace('\\\/?(?=\\/|$)', '') + handler.route.path,
               methods: Object.keys(handler.route.methods)
             });
           }

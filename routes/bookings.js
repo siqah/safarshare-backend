@@ -130,6 +130,10 @@ router.get('/my-bookings', requireAuth, async (req, res) => {
 // Get bookings for my rides (as driver)
 router.get('/ride-bookings', requireAuth, async (req, res) => {
   try {
+    if (req.clerkUser.role !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Only drivers can view ride bookings' });
+    }
+
     const rides = await Ride.find({ driverId: req.clerkUser._id }).select('_id');
     const rideIds = rides.map(ride => ride._id);
 
@@ -177,9 +181,6 @@ router.put('/:bookingId/accept', requireAuth, async (req, res) => {
     booking.rideId.availableSeats -= booking.seatsBooked;
     await booking.rideId.save();
 
-    // Get passenger details for notification
-    const passenger = await User.findById(booking.passengerId);
-    
     // Create notification for passenger
     try {
       await createBookingAcceptedNotification(
@@ -298,6 +299,10 @@ router.put('/:bookingId/cancel', requireAuth, async (req, res) => {
 // Get pending booking requests (for drivers)
 router.get('/requests', requireAuth, async (req, res) => {
   try {
+    if (req.clerkUser.role !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Only drivers can view booking requests' });
+    }
+
     // Find all rides by this driver
     const rides = await Ride.find({ driverId: req.clerkUser._id }).select('_id');
     const rideIds = rides.map(ride => ride._id);

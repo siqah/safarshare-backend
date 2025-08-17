@@ -66,6 +66,13 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // New role field for RBAC
+  role: {
+    type: String,
+    enum: ['rider', 'driver', 'admin'],
+    default: 'rider',
+    index: true
+  },
   driverLicense: {
     type: String,
     trim: true
@@ -113,7 +120,9 @@ const userSchema = new mongoose.Schema({
     default: Date.now
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
 // Indexes for better query performance
@@ -121,10 +130,21 @@ userSchema.index({ clerkId: 1 });
 userSchema.index({ email: 1 });
 userSchema.index({ isDriver: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ role: 1 });
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`;
+});
+
+// Backward-compatible avatar virtual
+userSchema.virtual('avatar').get(function() {
+  return this.profileImageUrl;
+});
+
+// Virtual for admin check
+userSchema.virtual('isAdmin').get(function () {
+  return this.role === 'admin';
 });
 
 // Method to calculate average rating
@@ -143,12 +163,23 @@ userSchema.methods.updateRating = function(newRating) {
 
 // Transform JSON output
 userSchema.methods.toJSON = function() {
-  const user = this.toObject();
+  const user = this.toObject({ virtuals: true });
   
   // Remove sensitive fields
   delete user.__v;
   
   return user;
 };
+
+// Keep isDriver and role in sync (backward compatible)
+userSchema.pre('save', function(next) {
+  if (this.isModified('role') && !this.isModified('isDriver')) {
+    this.isDriver = this.role === 'driver';
+  }
+  if (this.isModified('isDriver') && !this.isModified('role')) {
+    this.role = this.isDriver ? 'driver' : (this.role === 'admin' ? 'admin' : 'rider');
+  }
+  next();
+});
 
 module.exports = mongoose.model('User', userSchema);
