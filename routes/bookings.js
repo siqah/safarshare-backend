@@ -1,8 +1,7 @@
 const express = require('express');
-const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
+const { requireAuth } = require('../middleware/auth');
 const Booking = require('../models/Booking');
 const Ride = require('../models/Ride');
-const ClerkUser = require('../models/ClerkUser');
 const {
   createBookingRequestNotification,
   createBookingAcceptedNotification,

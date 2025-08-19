@@ -1,4 +1,4 @@
-const User = require('../models/ClerkUser');
+const User = require('../models/User');
 
 // Simple header-based auth replacement (no external providers)
 // - requireAuth: expects 'X-User-Id' header containing a user identifier
@@ -43,7 +43,7 @@ const requireAuth = async (req, res, next) => {
     }
 
     req.auth = { userId: user._id.toString() };
-    req.clerkUser = user;
+    req.clerkUser = user; // kept for backward compatibility in routes
     return next();
   } catch (error) {
     console.error('Auth middleware error:', error);

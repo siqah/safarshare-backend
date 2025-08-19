@@ -2,8 +2,7 @@ const express = require('express');
 const { body, validationResult, query } = require('express-validator');
 const Ride = require('../models/Ride');
 const Booking = require('../models/Booking');
-const ClerkUser = require('../models/ClerkUser');
-const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 
 const router = express.Router();
@@ -56,7 +55,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Create a new ride
+// Create a new ride (no role enforcement)
 router.post('/', requireAuth, [
   body('fromLocation').trim().isLength({ min: 1 }).withMessage('From location is required'),
   body('toLocation').trim().isLength({ min: 1 }).withMessage('To location is required'),
@@ -71,6 +70,8 @@ router.post('/', requireAuth, [
   body('description').optional().trim()
 ], async (req, res) => {
   try {
+    // Removed strict role check to allow using without role management
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ 
@@ -82,10 +83,14 @@ router.post('/', requireAuth, [
 
     const rideData = {
       ...req.body,
-      driverId: req.clerkUser._id,
+      driverId: req.clerkUser?._id || req.body.driverId, // fallback if provided
       availableSeats: req.body.totalSeats,
       status: 'active'
     };
+
+    if (!rideData.driverId) {
+      return res.status(400).json({ success: false, message: 'driverId missing' });
+    }
 
     const ride = new Ride(rideData);
     await ride.save();
@@ -220,7 +225,7 @@ router.get('/featured', async (req, res) => {
   }
 });
 
-// Get my rides as driver
+// Get my rides as driver (uses header-based auth)
 router.get('/my-rides', requireAuth, async (req, res) => {
   try {
     const rides = await Ride.find({ driverId: req.clerkUser._id })
@@ -309,7 +314,7 @@ router.get('/:rideId', async (req, res) => {
   }
 });
 
-// Update ride (only by driver)
+// Update ride (only by driver/owner)
 router.put('/:rideId', requireAuth, [
   body('fromLocation').optional().trim().isLength({ min: 1 }),
   body('toLocation').optional().trim().isLength({ min: 1 }),
@@ -320,15 +325,6 @@ router.put('/:rideId', requireAuth, [
   body('description').optional().trim()
 ], async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Validation failed',
-        errors: errors.array()
-      });
-    }
-
     const ride = await Ride.findOne({ 
       _id: req.params.rideId, 
       driverId: req.clerkUser._id 
@@ -380,7 +376,7 @@ router.put('/:rideId', requireAuth, [
   }
 });
 
-// Cancel ride (only by driver)
+// Cancel ride (only by driver/owner)
 router.delete('/:rideId', requireAuth, async (req, res) => {
   try {
     const ride = await Ride.findOne({ 

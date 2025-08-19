@@ -1,6 +1,6 @@
 const express = require('express');
 const { Webhook } = require('svix');
-const User = require('../models/ClerkUser');
+const User = require('../models/User');
 const router = express.Router();
 
 // Webhook to sync user data from Clerk
@@ -30,7 +30,7 @@ router.post('/webhooks/clerk', express.raw({ type: 'application/json' }), async 
         // Create new user in our database
         const newUser = new User({
           clerkId: id,
-          email: email_addresses[0]?.email_address,
+          email: email_addresses[0]?.email_address || `${id}@guest.local`,
           firstName: first_name || 'Unknown',
           lastName: last_name || 'User',
           profileImageUrl: image_url || '',
@@ -47,7 +47,7 @@ router.post('/webhooks/clerk', express.raw({ type: 'application/json' }), async 
         await User.findOneAndUpdate(
           { clerkId: id },
           {
-            email: email_addresses[0]?.email_address,
+            email: email_addresses[0]?.email_address || `${id}@guest.local`,
             firstName: first_name || 'Unknown',
             lastName: last_name || 'User',
             profileImageUrl: image_url || '',
