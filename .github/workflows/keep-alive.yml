@@ -1,68 +1,79 @@
-name: Keep SafariShare Backend Alive
+name: Keep Backend Alive
 
 on:
   schedule:
-    # Ping every 10 minutes (cron format: minute hour day month weekday)
     - cron: '*/10 * * * *'
-  
-  # Allow manual trigger from GitHub UI
   workflow_dispatch:
+
+# Harden permissions (no repo access needed)
+permissions: {}
+
+# Prevent overlapping runs if one takes longer than expected
+concurrency:
+  group: keep-alive-${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 2
+    env:
+      BASE_URL: https://safarshare-backend.onrender.com
+      USER_AGENT: GitHub-Actions-KeepAlive/1.1
+      TIMEOUT: 30
+      RETRIES: 2
+      RETRY_DELAY: 3
+
     steps:
-    - name: 🚀 Ping Primary Backend Endpoint
-      id: primary_ping # Give this step an ID to reference its status
-      run: |
-        echo "🚀 Starting keep-alive ping for SafariShare Backend..."
-        echo "⏰ Current time: $(date)"
-        
-        # Ping the primary keep-alive endpoint and capture the HTTP status code
-        # -s: silent, -o /dev/null: discard output, -w "%{http_code}": write HTTP code
-        # --max-time 30: timeout after 30 seconds
-        response_code=$(curl -s -o /dev/null -w "%{http_code}" \
-          -H "User-Agent: GitHub-Actions-KeepAlive/1.0" \
-          --max-time 30 \
-          https://safarshare-backend.onrender.com/keep-alive)
-        
-        echo "📊 Keep-alive response code: $response_code"
-        
-        # If the response is not 200, fail the step immediately.
-        # This makes the workflow's state clear.
-        if [ "$response_code" -ne 200 ]; then
-          echo "❌ Primary backend ping failed with HTTP code: $response_code"
-          exit 1 # This will cause the step and thus the job to fail
-        else
-          echo "✅ Backend is alive and healthy!"
-        fi
+      - name: Ping primary endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Starting keep-alive ping..."
+          echo "Current time (UTC): $(date -u)"
 
-    - name: 🏥 Verify Backend Health (Deeper Check)
-      run: |
-        echo "🔍 Performing deeper health verification..."
-        # Give the backend a moment to fully initialize if it just woke up.
-        sleep 5 
-        
-        health_status_code=$(curl -s -o /dev/null -w "%{http_code}" \
-          --max-time 20 \
-          https://safarshare-backend.onrender.com/api/health) # Assuming a more comprehensive health endpoint
-        
-        echo "🏥 Health endpoint status: $health_status_code"
-        
-        if [ "$health_status_code" -ne 200 ]; then
-          echo "⚠️ Health check returned non-200 status: $health_status_code"
-          exit 1 # Fail if the deeper health check isn't successful
-        else
-          echo "✅ All critical systems operational!"
-        fi
+          code=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "User-Agent: ${USER_AGENT}" \
+            --max-time "${TIMEOUT}" \
+            --retry "${RETRIES}" --retry-delay "${RETRY_DELAY}" --retry-all-errors \
+            --location \
+            "${BASE_URL}/keep-alive")
 
-    - name: 📝 Log Summary
-      if: always() # This step will always run, regardless of previous step failures
-      run: |
-        echo "======================================"
-        echo "🎯 SafariShare Backend Keep-Alive Summary"
-        echo "⏰ Job completed at $(date)"
-        echo "🌐 Target: https://safarshare-backend.onrender.com"
-        echo "🔄 Next scheduled run: In 10 minutes"
-        echo "======================================"
+          echo "Keep-alive HTTP status: ${code}"
+          if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+            echo "Primary backend ping failed with HTTP code: ${code}"
+            exit 1
+          fi
+          echo "Primary endpoint responded OK."
+
+      - name: Verify backend health
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Performing deeper health verification..."
+          sleep 5
+
+          code=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "User-Agent: ${USER_AGENT}" \
+            --max-time 20 \
+            --retry "${RETRIES}" --retry-delay "${RETRY_DELAY}" --retry-all-errors \
+            --location \
+            "${BASE_URL}/api/health")
+
+          echo "Health endpoint status: ${code}"
+          if [[ "${code}" -lt 200 || "${code}" -ge 300 ]]; then
+            echo "Health check returned non-2xx: ${code}"
+            exit 1
+          fi
+          echo "Health check OK."
+
+      - name: Log summary
+        if: always()
+        shell: bash
+        run: |
+          echo "======================================"
+          echo "SafariShare Backend Keep-Alive Summary"
+          echo "Job completed at $(date -u)"
+          echo "Target: ${BASE_URL}"
+          echo "Next scheduled run: ~10 minutes"
+          echo "======================================"

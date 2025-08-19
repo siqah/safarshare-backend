@@ -1,194 +1,74 @@
-const { ClerkExpressRequireAuth, clerkClient } = require('@clerk/clerk-sdk-node');
-const ClerkUser = require('../models/ClerkUser');
+const User = require('../models/ClerkUser');
 
-// Helper function to sync Clerk user data
-const syncClerkUser = async (userId) => {
+// Simple header-based auth replacement (no external providers)
+// - requireAuth: expects 'X-User-Id' header containing a user identifier
+// - optionalAuth: tries to set req.clerkUser if header is present; otherwise continues
+// If the provided ID is not a valid Mongo ObjectId or doesn't exist, we try clerkId field; if still not found, we auto-create a user.
+
+const HEADER_USER_ID = 'x-user-id';
+
+const ensureUserForId = async (rawId) => {
+  if (!rawId) return null;
+  let user = null;
   try {
-    // Get user from Clerk
-    const clerkUser = await clerkClient.users.getUser(userId);
-    
-    // Find or create user in our database
-    let dbUser = await ClerkUser.findOne({ clerkId: userId });
-    
-    if (!dbUser) {
-      // Create new user
-      dbUser = new ClerkUser({
-        clerkId: userId,
-        email: clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress,
-        firstName: clerkUser.firstName || '',
-        lastName: clerkUser.lastName || '',
-        profileImageUrl: clerkUser.imageUrl || '',
-        createdAt: new Date(clerkUser.createdAt),
-        updatedAt: new Date()
-      });
-      await dbUser.save();
-      console.log('✅ Created new ClerkUser:', dbUser._id);
-    } else {
-      // Update existing user
-      const updated = {
-        email: clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress,
-        firstName: clerkUser.firstName || '',
-        lastName: clerkUser.lastName || '',
-        profileImageUrl: clerkUser.imageUrl || '',
-        updatedAt: new Date()
-      };
-      
-      await ClerkUser.findByIdAndUpdate(dbUser._id, updated);
-      dbUser = { ...dbUser.toObject(), ...updated };
-      console.log('✅ Updated ClerkUser:', dbUser._id);
-    }
-    
-    return dbUser;
-  } catch (error) {
-    console.error('❌ Error syncing Clerk user:', error);
-    throw error;
-  }
+    // Try Mongo _id
+    user = await User.findById(rawId);
+    if (user) return user;
+  } catch {}
+
+  // Try legacy clerkId
+  user = await User.findOne({ clerkId: rawId });
+  if (user) return user;
+
+  // Auto-create minimal user
+  const guest = new User({
+    clerkId: rawId, // reuse field as external identifier
+    email: `${rawId}@guest.local`,
+    firstName: 'Guest',
+    lastName: rawId.toString().slice(0, 6),
+    profileImageUrl: '',
+    isDriver: false,
+  });
+  await guest.save();
+  return guest;
 };
 
-// Build verify options once
-const buildVerifyOptions = () => {
-  // Allow configuring additional authorized parties via env (comma separated)
-  const envParties = (process.env.CLERK_AUTHORIZED_PARTIES || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  const authorizedParties = [
-    process.env.FRONTEND_URL,
-    process.env.CLIENT_URL,
-    // Common local dev ports
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:3000',
-    // Known production frontend hosts
-    'https://safarishare.netlify.app', // with "i"
-    'https://safarshare.netlify.app',  // without "i" (typo variant observed)
-    'https://safarishare-app.netlify.app',
-    ...envParties,
-  ].filter(Boolean);
-
-  const options = {
-    secretKey: process.env.CLERK_SECRET_KEY,
-  };
-
-  // Optionally skip AZP check if instructed (useful to quickly mitigate prod 401s)
-  if (String(process.env.CLERK_SKIP_AZP_CHECK || '').toLowerCase() !== 'true') {
-    options.authorizedParties = authorizedParties;
-  }
-
-  return options;
-};
-
-// Enhanced middleware to require authentication and sync user
 const requireAuth = async (req, res, next) => {
   try {
-    const authHeader = (req.headers.authorization || req.headers.Authorization || '').toString();
-    const altHeader = req.headers['x-clerk-auth'];
+    const headerVal = req.headers[HEADER_USER_ID] || req.headers[HEADER_USER_ID.toUpperCase()];
+    const user = await ensureUserForId(headerVal);
 
-    let userId = null;
-
-    // Try local token verification first (supports both Session tokens and JWT templates)
-    if ((authHeader && authHeader.startsWith('Bearer ')) || altHeader) {
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : altHeader;
-      try {
-        const payload = await clerkClient.verifyToken(token, buildVerifyOptions());
-        userId = payload.sub;
-      } catch (err) {
-        console.warn('⚠️ Local token verification failed, falling back to Clerk middleware:', err?.message || err);
-      }
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'User ID header missing or invalid' });
     }
 
-    // If local verification failed or no token, fall back to Clerk's Express middleware (session introspection)
-    if (!userId) {
-      await new Promise((resolve, reject) => {
-        ClerkExpressRequireAuth({
-          onError: (error) => {
-            console.error('❌ Clerk session authentication error:', error?.message || error);
-            return reject(error);
-          }
-        })(req, res, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-
-      // Clerk middleware should set req.auth
-      if (req.auth && req.auth.userId) {
-        userId = req.auth.userId;
-      }
-    }
-
-    if (!userId) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-
-    // Ensure req.auth is set
-    req.auth = { userId };
-
-    // Sync user data
-    try {
-      const clerkUser = await syncClerkUser(userId);
-      req.clerkUser = clerkUser;
-    } catch (syncError) {
-      console.error('❌ User sync failed:', syncError);
-      return res.status(500).json({ success: false, message: 'User synchronization failed' });
-    }
-
+    req.auth = { userId: user._id.toString() };
+    req.clerkUser = user;
     return next();
   } catch (error) {
-    console.error('❌ Auth middleware error:', error);
-    return res.status(401).json({
-      success: false,
-      message: 'Authentication required'
-    });
+    console.error('Auth middleware error:', error);
+    return res.status(401).json({ success: false, message: 'Authentication required' });
   }
 };
 
-// Middleware to optionally get user (doesn't require auth)
 const optionalAuth = async (req, res, next) => {
   try {
-    const authHeader = (req.headers.authorization || req.headers.Authorization || '').toString();
-    const altHeader = req.headers['x-clerk-auth'];
-    const hasBearer = authHeader && authHeader.startsWith('Bearer ');
-
-    if (!hasBearer && !altHeader) {
+    const headerVal = req.headers[HEADER_USER_ID] || req.headers[HEADER_USER_ID.toUpperCase()];
+    if (!headerVal) {
       req.auth = null;
       req.clerkUser = null;
       return next();
     }
 
-    // If there's a token, try to verify it
-    const token = hasBearer ? authHeader.split(' ')[1] : altHeader;
-    
-    try {
-      const payload = await clerkClient.verifyToken(token, buildVerifyOptions());
-      req.auth = { userId: payload.sub };
-      
-      // Try to sync user data
-      try {
-        const clerkUser = await syncClerkUser(payload.sub);
-        req.clerkUser = clerkUser;
-      } catch (syncError) {
-        console.log('⚠️ Optional user sync failed:', syncError.message);
-        req.clerkUser = null;
-      }
-      
-      next();
-    } catch (error) {
-      console.log('⚠️ Optional auth failed:', error.message);
-      req.auth = null;
-      req.clerkUser = null;
-      next();
-    }
+    const user = await ensureUserForId(headerVal);
+    req.auth = user ? { userId: user._id.toString() } : null;
+    req.clerkUser = user || null;
+    return next();
   } catch (error) {
-    console.error('❌ Optional auth middleware error:', error);
     req.auth = null;
     req.clerkUser = null;
-    next();
+    return next();
   }
 };
 
-module.exports = {
-  requireAuth,
-  optionalAuth
-};
+module.exports = { requireAuth, optionalAuth };

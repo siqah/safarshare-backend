@@ -1,129 +1,89 @@
 const express = require('express');
-const { clerkClient } = require('@clerk/clerk-sdk-node');
-const User = require('../models/ClerkUser');
-const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
+const User = require('../models/User');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
+
 const router = express.Router();
 
-// Helper function to get or create user from Clerk
-const getOrCreateUser = async (clerkId) => {
-  let user = await User.findOne({ clerkId });
-  
-  if (!user) {
-    try {
-      // Fetch user data from Clerk
-      const clerkUser = await clerkClient.users.getUser(clerkId);
-      
-      user = new User({
-        clerkId: clerkId,
-        email: clerkUser.emailAddresses[0]?.emailAddress,
-        firstName: clerkUser.firstName || 'Unknown',
-        lastName: clerkUser.lastName || 'User',
-        profileImageUrl: clerkUser.imageUrl || '',
-        phone: clerkUser.phoneNumbers?.[0]?.phoneNumber || '',
-        emailVerified: clerkUser.emailAddresses[0]?.verification?.status === 'verified'
-      });
-      
-      await user.save();
-      console.log('✅ User auto-created:', user.email);
-    } catch (error) {
-      console.error('❌ Error fetching user from Clerk:', error);
-      throw new Error('Failed to fetch user data');
-    }
-  }
-  
-  return user;
-};
-
-// Get current user profile
+// GET /profile - current user profile (header-based)
 router.get('/profile', requireAuth, async (req, res) => {
   try {
-    const user = await getOrCreateUser(req.auth.userId);
-    
-    // Update last login
+    const user = await User.findById(req.clerkUser._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    // Update last login timestamp
     user.lastLogin = new Date();
     await user.save();
-    
-    res.json({
-      success: true,
-      user
-    });
+
+    return res.json({ success: true, user });
   } catch (error) {
     console.error('Get profile error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching profile'
-    });
+    return res.status(500).json({ success: false, message: 'Error fetching profile' });
   }
 });
 
-// Update user profile
+// PUT /profile - update current user profile (header-based)
 router.put('/profile', requireAuth, async (req, res) => {
   try {
-    const user = await getOrCreateUser(req.auth.userId);
-    
     const allowedUpdates = [
       'phone',
       'dateOfBirth',
       'bio',
       'preferences',
       'isDriver',
-      'driverLicense'
+      'driverLicense',
+      'firstName',
+      'lastName',
+      'email',
+      'profileImageUrl',
     ];
-    
+
     const updates = {};
-    allowedUpdates.forEach(field => {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+    for (const key of allowedUpdates) {
+      if (req.body[key] !== undefined) {
+        updates[key] = req.body[key];
       }
-    });
-    
-    // Handle nested preferences object
-    if (req.body.preferences) {
-      updates.preferences = {
-        ...user.preferences,
-        ...req.body.preferences
-      };
     }
-    
-    const updatedUser = await User.findOneAndUpdate(
-      { clerkId: req.auth.userId },
+
+    // Merge preferences if object provided
+    if (req.body.preferences && typeof req.body.preferences === 'object') {
+      const current = await User.findById(req.clerkUser._id);
+      updates.preferences = { ...(current?.preferences || {}), ...req.body.preferences };
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.clerkUser._id,
       updates,
       { new: true, runValidators: true }
     );
-    
-    res.json({
-      success: true,
-      message: 'Profile updated successfully',
-      user: updatedUser
-    });
+
+    if (!updatedUser) return res.status(404).json({ success: false, message: 'User not found' });
+
+    return res.json({ success: true, message: 'Profile updated successfully', user: updatedUser });
   } catch (error) {
     console.error('Update profile error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating profile'
-    });
+    return res.status(500).json({ success: false, message: 'Error updating profile' });
   }
 });
 
-// Get user by ID (public)
+// GET /:userId - public user info by Mongo _id or legacy clerkId
 router.get('/:userId', optionalAuth, async (req, res) => {
   try {
-    const user = await User.findOne({ 
-      clerkId: req.params.userId,
-      isActive: true 
-    }).select('-__v');
-    
+    const { userId } = req.params;
+
+    let user = null;
+    // Try by Mongo _id
+    try { user = await User.findById(userId); } catch {}
+    // Fallback to legacy clerkId
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      user = await User.findOne({ clerkId: userId, isActive: true });
     }
-    
-    // Return limited public information
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
     const publicUser = {
       _id: user._id,
-      clerkId: user.clerkId,
       firstName: user.firstName,
       lastName: user.lastName,
       profileImageUrl: user.profileImageUrl,
@@ -131,50 +91,33 @@ router.get('/:userId', optionalAuth, async (req, res) => {
       totalRides: user.totalRides,
       isDriver: user.isDriver,
       preferences: {
-        chattiness: user.preferences.chattiness,
-        music: user.preferences.music,
-        smoking: user.preferences.smoking,
-        pets: user.preferences.pets
+        chattiness: user.preferences?.chattiness,
+        music: user.preferences?.music,
+        smoking: user.preferences?.smoking,
+        pets: user.preferences?.pets
       }
     };
-    
-    res.json({
-      success: true,
-      user: publicUser
-    });
+
+    return res.json({ success: true, user: publicUser });
   } catch (error) {
     console.error('Get user error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching user'
-    });
+    return res.status(500).json({ success: false, message: 'Error fetching user' });
   }
 });
 
-// Sync user data with Clerk (for frontend calls)
+// POST /sync - no-op sync for compatibility; returns current user
 router.post('/sync', requireAuth, async (req, res) => {
   try {
-    console.log('🔄 Manual sync requested for user:', req.auth.userId);
-    
-    const user = await getOrCreateUser(req.auth.userId);
-    
-    // Update last login
+    const user = await User.findById(req.clerkUser._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
     user.lastLogin = new Date();
     await user.save();
-    
-    console.log('✅ User sync completed:', user.email);
-    
-    res.json({
-      success: true,
-      user,
-      message: 'User synced successfully'
-    });
+
+    return res.json({ success: true, user, message: 'User synced successfully' });
   } catch (error) {
-    console.error('❌ User sync error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error syncing user data'
-    });
+    console.error('User sync error:', error);
+    return res.status(500).json({ success: false, message: 'Error syncing user data' });
   }
 });
 

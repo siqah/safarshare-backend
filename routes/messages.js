@@ -1,8 +1,7 @@
 const express = require('express');
 const Message = require('../models/Message');
 const Booking = require('../models/Booking');
-const ClerkUser = require('../models/ClerkUser');
-const { requireAuth, optionalAuth } = require('../middleware/clerkAuth');
+const { requireAuth } = require('../middleware/auth');
 const { createMessageNotification } = require('../utils/notifications');
 
 const router = express.Router();
