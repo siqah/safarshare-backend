@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     env:
-      BASE_URL: ${{vars.BASE_URL}}
+      BASE_URL: https://safarishare-backend.onrender.com
       USER_AGENT: GitHub-Actions-KeepAlive/1.1
     steps:
       - name: Health ping
