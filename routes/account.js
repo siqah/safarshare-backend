@@ -1,11 +1,12 @@
 const express = require('express');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, ensureUserInDB } = require('../middleware/auth');
 const User = require('../models/User');
 
 const router = express.Router();
 
 // Protect all routes in this router
 router.use(requireAuth);
+router.use(ensureUserInDB);
 
 // POST /api/account/select-role
 // Body: { role: 'rider' | 'driver' }

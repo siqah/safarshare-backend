@@ -1,16 +1,14 @@
 const express = require('express');
-const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth, ensureUserInDB } = require('../middleware/auth');
 const User = require('../models/User');
 
 const router = express.Router();
 
 // Get current user profile
-router.get('/me', requireAuth, async (req, res) => {
+router.get('/me', requireAuth, ensureUserInDB, async (req, res) => {
   try {
-    const user = await User.findById(req.clerkUser._id);
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-
-    return res.json({ success: true, user });
+    // After ensureUserInDB, req.clerkUser is the database user object
+    return res.json({ success: true, user: req.clerkUser });
   } catch (error) {
     console.error('Get current user error:', error);
     return res.status(500).json({ success: false, message: 'Error fetching profile' });
@@ -18,7 +16,7 @@ router.get('/me', requireAuth, async (req, res) => {
 });
 
 // Update current user profile
-router.put('/me', requireAuth, async (req, res) => {
+router.put('/me', requireAuth, ensureUserInDB, async (req, res) => {
   try {
     const allowedUpdates = [
       'phone',
@@ -62,7 +60,7 @@ router.put('/me', requireAuth, async (req, res) => {
 });
 
 // Select role for current user
-router.post('/select-role', requireAuth, async (req, res) => {
+router.post('/select-role', requireAuth, ensureUserInDB, async (req, res) => {
   try {
     const { role } = req.body || {};
     if (!['rider', 'driver'].includes(role)) {

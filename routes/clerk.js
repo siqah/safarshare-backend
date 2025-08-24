@@ -35,7 +35,9 @@ router.post('/webhooks/clerk', express.raw({ type: 'application/json' }), async 
           lastName: last_name || 'User',
           profileImageUrl: image_url || '',
           phone: phone_numbers?.[0]?.phone_number || '',
-          emailVerified: email_addresses[0]?.verification?.status === 'verified'
+          emailVerified: email_addresses[0]?.verification?.status === 'verified',
+          role: 'rider', // default role
+          isDriver: false
         });
         
         await newUser.save();
