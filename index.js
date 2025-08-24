@@ -8,12 +8,14 @@ require('dotenv').config({ path: '.env' });
 const { connectDB, disconnectDB } = require('./config/db');
 const { createSocket } = require('./config/socket');
 
+const clerkRoutes = require('./routes/clerk');
 const rideRoutes = require('./routes/rides');
 const bookingRoutes = require('./routes/bookings');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
 const usersRoutes = require('./routes/users');
 const accountRoutes = require('./routes/account');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const server = http.createServer(app);
@@ -64,12 +66,14 @@ app.use((req, _res, next) => {
 });
 
 // Routes
+app.use('/api', clerkRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/account', accountRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Basic endpoints
 app.get('/', (_req, res) => res.json({ message: 'SafariShare Backend is running' }));

@@ -1,58 +1,42 @@
-const { createClerkClient } = require('@clerk/clerk-sdk-node');
+const { clerkClient } = require('@clerk/clerk-sdk-node');
 const User = require('../models/User');
-
-// Initialize Clerk client with secret key
-const clerk = createClerkClient({
-  secretKey: process.env.CLERK_SECRET_KEY,
-});
 
 // Clerk-based authentication middleware
 const requireAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    console.log('Auth header received:', authHeader ? 'Present' : 'Missing'); // Debug log
-    
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'Authentication required' });
     }
 
     const token = authHeader.split(' ')[1];
-    console.log('Token extracted, length:', token ? token.length : 0); // Debug log
     
-    // Verify the token with Clerk and get session claims
-    const sessionClaims = await clerk.verifyToken(token);
+    // Verify the token with Clerk
+    const sessionClaims = await clerkClient.verifyToken(token);
     if (!sessionClaims) {
       return res.status(401).json({ success: false, message: 'Invalid token' });
     }
 
-    console.log('Session claims:', sessionClaims); // Debug log
+    // Get user details from Clerk
+    const clerkUser = await clerkClient.users.getUser(sessionClaims.sub);
+    if (!clerkUser) {
+      return res.status(401).json({ success: false, message: 'User not found' });
+    }
 
-    // Use session claims directly instead of making another API call
-    // The session claims contain all the user info we need
+    // Add user info to request for backward compatibility
     req.clerkUser = {
-      _id: sessionClaims.sub,
-      clerkId: sessionClaims.sub,
-      email: sessionClaims.email || '',
-      firstName: sessionClaims.given_name || '',
-      lastName: sessionClaims.family_name || '',
-      profileImageUrl: sessionClaims.picture || ''
+      _id: clerkUser.id,
+      clerkId: clerkUser.id,
+      email: clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress || '',
+      firstName: clerkUser.firstName || '',
+      lastName: clerkUser.lastName || '',
+      profileImageUrl: clerkUser.profileImageUrl || ''
     };
-
-    console.log('Clerk user from token:', req.clerkUser); // Debug log
 
     next();
   } catch (error) {
-    console.error('Auth error details:', {
-      message: error.message,
-      status: error.status,
-      clerkError: error.clerkError
-    });
-    
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Authentication failed',
-      error: error.message 
-    });
+    console.error('Auth error:', error);
+    return res.status(401).json({ success: false, message: 'Authentication failed' });
   }
 };
 
@@ -67,26 +51,29 @@ const optionalAuth = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     
     // Verify the token with Clerk
-    const sessionClaims = await clerk.verifyToken(token);
+    const sessionClaims = await clerkClient.verifyToken(token);
     if (!sessionClaims) {
       req.clerkUser = null;
       return next();
     }
 
-    // Use session claims directly
+    // Get user details from Clerk
+    const clerkUser = await clerkClient.users.getUser(sessionClaims.sub);
+    if (!clerkUser) {
+      req.clerkUser = null;
+      return next();
+    }
+
     req.clerkUser = {
-      _id: sessionClaims.sub,
-      clerkId: sessionClaims.sub,
-      email: sessionClaims.email || '',
-      firstName: sessionClaims.given_name || '',
-      lastName: sessionClaims.family_name || '',
-      profileImageUrl: sessionClaims.picture || ''
+      _id: clerkUser.id,
+      clerkId: clerkUser.id,
+      email: clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses[0]?.emailAddress || '',
+      firstName: clerkUser.firstName || '',
+      lastName: clerkUser.lastName || '',
+      profileImageUrl: clerkUser.profileImageUrl || ''
     };
   } catch (error) {
-    console.error('Optional auth error:', {
-      message: error.message,
-      status: error.status
-    });
+    console.error('Optional auth error:', error);
     req.clerkUser = null;
   }
   
