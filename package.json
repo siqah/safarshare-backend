@@ -13,12 +13,16 @@
   "dependencies": {
     "@clerk/clerk-sdk-node": "^4.13.23",
     "axios": "^1.11.0",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.2",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "express-rate-limit": "^6.10.0",
     "express-validator": "^7.0.1",
     "helmet": "^7.0.0",
+    "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.8.7",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.5",
@@ -26,5 +30,8 @@
     "socket.io": "^4.7.2",
     "svix": "^1.74.1",
     "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10"
   }
 }

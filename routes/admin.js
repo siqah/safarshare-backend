@@ -1,15 +1,10 @@
 const express = require('express');
-const { requireAuth, requireAdmin, ensureUserInDB } = require('../middleware/auth');
 const User = require('../models/User');
 const Ride = require('../models/Ride');
 const Booking = require('../models/Booking');
 const Message = require('../models/Message');
 const router = express.Router();
 
-// Protect all admin routes
-router.use(requireAuth);
-router.use(ensureUserInDB);
-router.use(requireAdmin);
 
 // Dashboard stats
 router.get('/stats', async (req, res) => {
