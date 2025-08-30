@@ -21,9 +21,8 @@ const rideSchema = new mongoose.Schema({
     required: true,
     validate: {
       validator: function(date) {
-        // Allow dates from today onwards (not just future)
         const today = new Date();
-        today.setHours(0, 0, 0, 0); // Start of today
+        today.setHours(0, 0, 0, 0);
         return date >= today;
       },
       message: 'Departure date must be today or in the future'
@@ -108,15 +107,13 @@ const rideSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for search optimization
 rideSchema.index({ fromLocation: 'text', toLocation: 'text' });
 rideSchema.index({ departureDate: 1, status: 1 });
 rideSchema.index({ driverId: 1 });
 
-// Validate available seats don't exceed total seats
 rideSchema.pre('save', function(next) {
   if (this.availableSeats > this.totalSeats) {
-    next(new Error('Available seats cannot exceed total seats'));
+    return next(new Error('Available seats cannot exceed total seats'));
   }
   next();
 });

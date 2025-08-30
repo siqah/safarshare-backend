@@ -1,14 +1,15 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  // External user ID (legacy Clerk ID) - used as an external identifier
-  clerkId: {
+  // Auth
+  password: {
     type: String,
     required: true,
-    unique: true,
-    index: true
+    minlength: 8,
+    select: false
   },
-  
+
   // User profile info
   email: {
     type: String,
@@ -61,12 +62,11 @@ const userSchema = new mongoose.Schema({
     default: 0
   },
   
-  // Driver information
+  // Driver / role information
   isDriver: {
     type: Boolean,
     default: false
   },
-  // New role field for RBAC
   role: {
     type: String,
     enum: ['rider', 'driver', 'admin'],
@@ -125,8 +125,7 @@ const userSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes for better query performance
-userSchema.index({ clerkId: 1 });
+// Indexes
 userSchema.index({ email: 1 });
 userSchema.index({ isDriver: 1 });
 userSchema.index({ isActive: 1 });
@@ -161,17 +160,29 @@ userSchema.methods.updateRating = function(newRating) {
   return this.save();
 };
 
+// Password helpers
+userSchema.methods.comparePassword = async function(plain) {
+  return bcrypt.compare(plain, this.password);
+};
+
 // Transform JSON output
 userSchema.methods.toJSON = function() {
   const user = this.toObject({ virtuals: true });
-  
-  // Remove sensitive fields
   delete user.__v;
-  
+  delete user.password;
   return user;
 };
 
-// Keep isDriver and role in sync (backward compatible)
+// Hash password before save
+userSchema.pre('save', async function(next) {
+  if (this.isModified('password')) {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+  }
+  next();
+});
+
+// Keep isDriver and role in sync
 userSchema.pre('save', function(next) {
   if (this.isModified('role') && !this.isModified('isDriver')) {
     this.isDriver = this.role === 'driver';

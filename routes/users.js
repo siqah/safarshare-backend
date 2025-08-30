@@ -1,11 +1,9 @@
 const express = require('express');
-const { requireAuth, optionalAuth, ensureUserInDB } = require('../middleware/auth');
 const User = require('../models/User');
 
 const router = express.Router();
 
-// Get current user profile
-router.get('/me', requireAuth, ensureUserInDB, async (req, res) => {
+router.get('/me', async (req, res) => {
   try {
     // After ensureUserInDB, req.clerkUser is the database user object
     return res.json({ success: true, user: req.clerkUser });
@@ -16,20 +14,29 @@ router.get('/me', requireAuth, ensureUserInDB, async (req, res) => {
 });
 
 // Update current user profile
-router.put('/me', requireAuth, ensureUserInDB, async (req, res) => {
+router.put('/me', async (req, res) => {
   try {
+    // Fields user is allowed to update via /me
     const allowedUpdates = [
-      'phone',
-      'dateOfBirth',
-      'bio',
-      'preferences',
-      'isDriver',
-      'driverLicense',
       'firstName',
       'lastName',
       'email',
       'profileImageUrl',
+      'phone',
+      'dateOfBirth',
+      'bio',
+      'preferences',       // whole preferences object (merged below)
+      'driverLicense'      // ONLY the license string; role/isDriver handled elsewhere
     ];
+
+    // Reject any unexpected top-level fields (except those internally handled)
+    const invalid = Object.keys(req.body).filter(k => !allowedUpdates.includes(k));
+    if (invalid.length) {
+      return res.status(400).json({
+      success: false,
+      message: `Cannot update fields: ${invalid.join(', ')}`
+      });
+    }
 
     const updates = {};
     for (const key of allowedUpdates) {
@@ -60,7 +67,7 @@ router.put('/me', requireAuth, ensureUserInDB, async (req, res) => {
 });
 
 // Select role for current user
-router.post('/select-role', requireAuth, ensureUserInDB, async (req, res) => {
+router.post('/select-role', async (req, res) => {
   try {
     const { role } = req.body || {};
     if (!['rider', 'driver'].includes(role)) {
@@ -81,7 +88,7 @@ router.post('/select-role', requireAuth, ensureUserInDB, async (req, res) => {
 });
 
 // Public: Get user by ID (supports either Mongo _id or legacy clerkId)
-router.get('/:userId', optionalAuth, async (req, res) => {
+router.get('/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
 
