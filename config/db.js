@@ -15,11 +15,6 @@ async function connectDB(uri) {
   return mongoose.connection;
 }
 
-async function disconnectDB() {
-  if (mongoose.connection.readyState !== 0) {
-    await mongoose.disconnect();
-    isConnected = false;
-  }
-}
 
-module.exports = { connectDB, disconnectDB };
+
+module.exports = { connectDB };
