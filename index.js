@@ -1,120 +1,35 @@
+
 const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const helmet = require('helmet');
-const http = require('http');
-require('dotenv').config({ path: '.env' });
+require('dotenv').config();
 const cookieParser = require('cookie-parser');
+const { connectDB } = require('./config/db');
 
-const authRoutes = require('./routes/auth');  
-const usersRoutes = require('./routes/users');
-const adminRoutes = require('./routes/admin');
-const { requireAuth } = require('./middleware/auth');
 
-const { connectDB, disconnectDB } = require('./config/db');
-const { createSocket } = require('./config/socket');
 
+
+const PORT = process.env.PORT || 3000;
 const app = express();
-const server = http.createServer(app);
+app.use(express.json());
+app.use(cookieParser())
 
-const isDev = process.env.NODE_ENV !== 'production';
-const PORT = process.env.PORT || 5001;
+//Routes
+app.use('/api/auth', require('./routes/auth'));
 
-// Security + parsers
-app.use(helmet());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
 
-// CORS (simple)
-const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  process.env.CLIENT_URL,
-  'http://localhost:5173',
-  'http://localhost:3000'
-].filter(Boolean);
+// Health check
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      const o = origin.replace(/\/$/, '');
-      if (isDev || allowedOrigins.includes(o) || o.endsWith('.netlify.app')) return cb(null, true);
-      return cb(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-User-Id']
-  })
-);
-
-// Minimal request log in dev
-if (isDev) {
-  app.use((req, _res, next) => {
-    console.log(`${req.method} ${req.url}`);
-    next();
-  });
-}
-
-// Init Socket.IO and expose to routes
-const io = createSocket(server, { allowedOrigins, isDev });
-app.use((req, _res, next) => {
-  req.io = io;
-  next();
-});
-
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', requireAuth, usersRoutes);
-app.use('/api/admin', adminRoutes);
-
-// Basic endpoints
-app.get('/', (_req, res) => res.json({ message: 'SafariShare Backend is running' }));
-app.get('/api/health', (_req, res) => {
-  const s = mongoose.connection.readyState;
-  res.json({
-    status: s === 1 ? 'OK' : 'DEGRADED',
-    db: s
-  });
-});
-
-// 404 + error handlers
-app.use('*', (req, res) => {
-  res.status(404).json({ success: false, message: 'Route not found' });
-});
-
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(err.status || 500).json({ success: false, message: 'Internal server error' });
-});
-
-// Start
-const startServer = async () => {
+const start = async () => {
   try {
     await connectDB(process.env.MONGODB_URI);
-    server.listen(PORT, () => {
-      console.log(`Server listening on port ${PORT}`);
+    console.log('✅ Database connected');
+
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on http://localhost:${PORT}`);
     });
-  } catch (e) {
-    console.error('Failed to start server:', e.message);
+  } catch (err) {
+    console.error('❌ Startup failed:', err.message);
     process.exit(1);
   }
 };
-
-// Graceful shutdown
-const shutdown = () => {
-  console.log('Shutting down...');
-  server.close(async () => {
-    try {
-      await disconnectDB();
-    } finally {
-      process.exit(0);
-    }
-  });
-};
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-startServer();
-
-module.exports = { app, io };
+start();

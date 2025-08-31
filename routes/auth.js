@@ -1,106 +1,66 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
+const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
-const { registerValidator, loginValidator } = require('../middleware/validators');
-const asyncHandler = require('../middleware/asyncHandler');
-const { validationResult } = require('express-validator');
-const { signAccessToken, signRefreshToken, setRefreshCookie, verifyRefreshToken } = require('../utils/jwt');
+const { generateToken } = require('../utils/jwt');
 
 const router = express.Router();
 
-const publicUser = (u) => ({
-  id: u._id,
-  email: u.email,
-  firstName: u.firstName,
-  lastName: u.lastName,
-  fullName: u.fullName,
-  role: u.role,
-  profileImageUrl: u.profileImageUrl,
-  rating: u.rating,
-  isDriver: u.isDriver
-});
+// REGISTER
+router.post('/register', 
+  [
+    body('email').isEmail().withMessage('Invalid email'),
+    body('password').isLength({ min: 6 }).withMessage('Password too short'),
+    body('name').notEmpty().withMessage('Name required')
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return res.status(400).json({ errors: errors.array() });
 
-const issueTokens = (res, user) => {
-  const accessToken = signAccessToken(user);
-  const refreshToken = signRefreshToken(user);
-  setRefreshCookie(res, refreshToken);
-  return accessToken;
-};
+    const { email, password, name } = req.body;
 
-// Register
-router.post('/register', registerValidator, asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty())
-    return res.status(400).json({ success: false, errors: errors.array() });
+    // Check if user exists
+    if (await User.findOne({ email }))
+      return res.status(400).json({ message: "Email already exists" });
 
-  const { email, password, firstName, lastName } = req.body;
-  const normEmail = email.toLowerCase();
+    // Hash password
+    const hashed = await bcrypt.hash(password, 10);
 
-  if (await User.findOne({ email: normEmail }))
-    return res.status(409).json({ success: false, message: 'Email in use' });
+    const user = await User.create({ email, password: hashed, name });
 
-  const hash = await bcrypt.hash(password, 12);
-  let user;
-  try {
-    user = await new User({ email: normEmail, firstName, lastName, password: hash }).save();
-  } catch (e) {
-    if (e.code === 11000) return res.status(409).json({ success: false, message: 'Email in use' });
-    throw e;
+    res.status(201).json({
+      message: "User registered",
+      token: generateToken(user._id),
+      user: { id: user._id, email: user.email, name: user.name }
+    });
   }
+);
 
-  const accessToken = issueTokens(res, user);
-  res.status(201).json({ success: true, user: publicUser(user), accessToken });
-}));
+// LOGIN
+router.post('/login',
+  [
+    body('email').isEmail(),
+    body('password').notEmpty()
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return res.status(400).json({ errors: errors.array() });
 
-// Login
-router.post('/login', loginValidator, asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty())
-    return res.status(400).json({ success: false, errors: errors.array() });
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
-  const { email, password } = req.body;
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
-  if (!user || !(await bcrypt.compare(password, user.password)))
-    return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
-  user.lastLogin = new Date();
-  await user.save();
-
-  const accessToken = issueTokens(res, user);
-  res.json({ success: true, user: publicUser(user), accessToken });
-}));
-
-// Refresh (rotate refresh token)
-router.post('/refresh', asyncHandler(async (req, res) => {
-  const token = req.cookies?.rt;
-  if (!token) return res.status(401).json({ success: false, message: 'No refresh token' });
-
-  let payload;
-  try {
-    payload = verifyRefreshToken(token);
-  } catch (e) {
-    return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+    res.json({
+      message: "Logged in",
+      token: generateToken(user._id),
+      user: { id: user._id, email: user.email, name: user.name }
+    });
   }
-
-  const user = await User.findById(payload.sub);
-  if (!user) return res.status(401).json({ success: false, message: 'User not found' });
-
-  const newAccess = signAccessToken(user);
-  const newRefresh = signRefreshToken(user); // rotation
-  setRefreshCookie(res, newRefresh);
-  res.json({ success: true, accessToken: newAccess });
-}));
-
-// Logout
-router.post('/logout', (req, res) => {
-  res.clearCookie('rt', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/api/auth/refresh'
-  });
-  res.status(204).end();
-});
+);
 
 module.exports = router;
