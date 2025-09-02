@@ -46,10 +46,11 @@ router.post('/createRide', protect, async (req, res) => {
 })
 
 // Get all active rides
-router.get('/my-rides', protect, async (req, res) => {
+router.get('/myRides', protect, async (req, res) => {
     try{
         const rides = await Ride.find({status: 'active'}).populate('driver', 'name email').populate('passenger', 'name email');
         res.json({rides});
+        
     }catch(err){
         console.error("Get rides error:", err);
         res.status(500).json({message: "Server error"});
