@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 import auth from './routes/auth.js';
 import driver from './routes/driver.js';
+import ride from './routes/ride.js';
 
 
 const PORT = process.env.PORT || 3000;
@@ -22,6 +23,7 @@ app.use(cors({
 //Routes
 app.use('/api/auth', auth);
 app.use('/api/driver', driver);
+app.use('/api/ride', ride);
 
 
 // Health check
