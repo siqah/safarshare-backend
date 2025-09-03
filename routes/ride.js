@@ -60,10 +60,24 @@ router.get('/myRides', protect, async (req, res) => {
 //Passsenger route
 router.get('/available-rides', protect, async (req, res) => {
     try{
-        if(req.user.role !== 'passenger'){
-            return res.status(403).json({message : "Only passenger can view available rides"});
+  
+        const { startLocation, destination, date, minSeats } = req.query;
+        const query = { status: 'active', availableSeats: { $gt: 0 } };
+        if(startLocation) query.startLocation = { $regex: new RegExp(startLocation, 'i') };
+        if(destination) query.destination = { $regex: new RegExp(destination, 'i') };
+        if(minSeats) query.availableSeats = { $gte: Number(minSeats) };
+        if(date){
+            // date expected as YYYY-MM-DD; filter rides on that calendar day
+            const d = new Date(date);
+            if(!isNaN(d.getTime())){
+                const next = new Date(d);
+                next.setDate(d.getDate() + 1);
+                query.departureTime = { $gte: d, $lt: next };
+            }
         }
-        const rides = await Ride.find({status: 'active', availableSeats: {$gt: 0}}).populate('driver', 'name email').populate('passenger', 'name email');
+        const rides = await Ride.find(query)
+            .sort({ departureTime: 1 })
+            .populate('driver', 'name email');
         res.json({rides});
     }catch(err){
         console.error("Get rides error:", err);
@@ -73,26 +87,49 @@ router.get('/available-rides', protect, async (req, res) => {
 // Book a ride (Passenger only)
 router.post('/book/:rideId', protect, async (req, res) => {
     try{
-        if(req.user.role !== 'passenger'){
-            return res.status(403).json({message : "Only passenger can book rides"});
+        const seatsRequested = Math.max(1, parseInt(req.body.seats) || 1);
+        // Atomically decrement seats if available
+        const ride = await Ride.findOneAndUpdate(
+            { _id: req.params.rideId, status: 'active', availableSeats: { $gte: seatsRequested } },
+            { $inc: { availableSeats: -seatsRequested } },
+            { new: true }
+        ).populate('driver', 'name email');
+        if(!ride){
+            return res.status(404).json({message: "Ride not found, not active, or insufficient seats"});
         }
-        const ride = await Ride.findById(req.params.rideId);
-        if(!ride || ride.status !== 'active'){
-            return res.status(404).json({message: "Ride not found or not active"});
+        const existingBooking = await Booking.findOne({ ride: ride._id, passenger: req.user._id, status: 'booked' });
+        if(existingBooking){
+            return res.status(400).json({ message: 'You already have a booking for this ride' });
         }
-        res.json({ride});
+        const booking = await Booking.create({
+            ride: ride._id,
+            passenger: req.user._id,
+            seatsBooked: seatsRequested
+        });
+        await booking.populate({ path: 'ride', populate: { path: 'driver', select: 'name email' } });
+        res.status(201).json({ message: 'Ride booked', ride, booking });
     }catch(err){
-        console.error("Get ride error:", err);
+        console.error("Book ride error:", err);
         res.status(500).json({message: "Server error"});
+    }
+});
+
+// Passenger bookings list
+router.get('/bookings', protect, async (req, res) => {
+    try {
+        const bookings = await Booking.find({ passenger: req.user._id, status: { $in: ['booked', 'cancelled'] } })
+            .sort({ createdAt: -1 })
+            .populate({ path: 'ride', populate: { path: 'driver', select: 'name email' } });
+        res.json({ bookings });
+    } catch(err){
+        console.error('List bookings error:', err);
+        res.status(500).json({ message: 'Server error' });
     }
 });
 
 // Cancel a booking (Passenger only)
 router.post('/cancel/:bookingId', protect, async (req, res) => {
     try{
-        if(req.user.role !== 'passenger'){
-            return res.status(403).json({message : "Only passenger can cancel bookings"});
-        }
         const booking = await Booking.findById(req.params.bookingId).populate('ride');
         if(!booking || booking.status !== 'booked'){
             return res.status(404).json({message: "Booking not found or already cancelled"});
@@ -101,7 +138,7 @@ router.post('/cancel/:bookingId', protect, async (req, res) => {
             return res.status(403).json({message: "Not authorized to cancel this booking"});
         }
         booking.status = 'cancelled';
-        await booking.ride.updateOne({$inc: {availableSeats: booking.seatsBooked}});
+        await Ride.findByIdAndUpdate(booking.ride._id, { $inc: { availableSeats: booking.seatsBooked } });
         await booking.save();
         res.json({message: "Booking cancelled", booking});
     }catch(err){
