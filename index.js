@@ -1,23 +1,33 @@
+import express from "express";
+import  cookieParser from "cookie-parser";
+import cors from "cors";
+import { connectDB } from "./config/db.js";
+import dotenv from "dotenv";
 
-const express = require('express');
-require('dotenv').config();
-const cookieParser = require('cookie-parser');
-const cors = require('cors');
-const { connectDB } = require('./config/db');
-
+dotenv.config();
+import auth from './routes/auth.js';
+import driver from './routes/driver.js';
+import ride from './routes/ride.js';
 
 
 const PORT = process.env.PORT || 3000;
 const app = express();
+
 app.use(express.json());
 app.use(cookieParser())
+
 app.use(cors({
-  origin: 'http://localhost:5173',
-  credentials: true
+  origin: [
+    "http://localhost:5173",       // local dev
+    "https://safarishare.netlify.app" // production frontend
+  ],
+  credentials: true,
 }));
 
 //Routes
-app.use('/api/auth', require('./routes/auth'));
+app.use('/api/auth', auth);
+app.use('/api/driver', driver);
+app.use('/api/ride', ride);
 
 
 // Health check
