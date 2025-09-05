@@ -3,15 +3,19 @@ import  cookieParser from "cookie-parser";
 import cors from "cors";
 import { connectDB } from "./config/db.js";
 import dotenv from "dotenv";
+import http from "http"
 
 dotenv.config();
 import auth from './routes/auth.js';
 import driver from './routes/driver.js';
 import ride from './routes/ride.js';
+import { initSocket } from "./config/socket.js";
 
 
 const PORT = process.env.PORT || 3000;
 const app = express();
+const server = http.createServer(app);
+initSocket(server);
 
 app.use(express.json());
 app.use(cookieParser())
