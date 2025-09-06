@@ -42,7 +42,8 @@ const start = async () => {
     await connectDB(process.env.MONGODB_URI);
     console.log('✅ Database connected');
 
-    app.listen(PORT, () => {
+    // IMPORTANT: listen on the HTTP server (so Socket.IO works)
+    server.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
     });
   } catch (err) {

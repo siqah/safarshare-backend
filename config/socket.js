@@ -9,18 +9,33 @@ export const initSocket = (server) => {
       origin: [
         "http://localhost:5173",      
         "https://safarishare.netlify.app" 
-      ]
+      ],
+      credentials: true
     },
   });
   io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
+    console.log("Socket connected:", socket.id);
 
+    // Preferred auth event to join appropriate rooms
+    socket.on('auth', ({ userId, role }) => {
+      if(!userId) return;
+      socket.data.userId = userId;
+      socket.data.role = role;
+      if(role === 'driver'){
+        socket.join(`driver:${userId}`);
+        console.log(`socket ${socket.id} joined room driver:${userId}`);
+      }
+    });
+
+    // Backward compatibility for old client
     socket.on("joinDriverRoom", (driverId) =>{
+      if(!driverId) return;
       socket.join(`driver:${driverId}`);
       console.log(`socket ${socket.id} joined room driver:${driverId}`);
     });
-    socket.on("discconnect", () => {
-      console.log("User disconnected:", socket.id)
+
+    socket.on("disconnect", () => {
+      console.log("Socket disconnected:", socket.id)
     });
   });
 
