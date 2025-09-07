@@ -7,7 +7,7 @@ import {getIO} from '../config/socket.js';
 const router = express.Router();
 
 // Driver rides
-router.post('/driver/rides', protect, async (req, res) => {
+router.get('/driver/rides', protect, async (req, res) => {
     try {
         if (req.user.role !== 'driver') {
             return res.status(403).json({ message: "Only drivers can access this route" });
