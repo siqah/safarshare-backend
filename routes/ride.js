@@ -58,6 +58,32 @@ router.get('/myRides', protect, async (req, res) => {
     }
 })
 
+router.put("/:id/cancel", protect, async (req, res) => {
+  try {
+    const ride = await Ride.findById(req.params.id);
+
+    if (!ride) {
+      return res.status(404).json({ message: "Ride not found" });
+    }
+
+    // Make sure only the assigned driver can cancel their ride
+    if (ride.driver.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    ride.status = "canceled";
+    ride.canceledAt = new Date();
+
+    await ride.save();
+
+    res.json({ message: "Ride canceled successfully", ride });
+  } catch (err) {
+    console.error("Cancel ride error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 //Passsenger route
 router.get('/available-rides', protect, async (req, res) => {
     try{
