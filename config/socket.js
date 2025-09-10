@@ -8,6 +8,7 @@ export const initSocket = (server) => {
     cors: {
       origin: [
         "http://localhost:5173",      
+        "http://localhost:5174",      
         "https://safarishare.netlify.app" 
       ],
       credentials: true
@@ -21,9 +22,14 @@ export const initSocket = (server) => {
       if(!userId) return;
       socket.data.userId = userId;
       socket.data.role = role;
+      // Join role-specific rooms
       if(role === 'driver'){
         socket.join(`driver:${userId}`);
         console.log(`socket ${socket.id} joined room driver:${userId}`);
+      }
+      if(role === 'user' || role === 'passenger'){
+        socket.join(`passenger:${userId}`);
+        console.log(`socket ${socket.id} joined room passenger:${userId}`);
       }
     });
 
