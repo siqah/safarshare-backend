@@ -24,6 +24,7 @@ app.use(cookieParser())
 app.use(cors({
   origin: [
     "http://localhost:5173",       // local dev
+    "http://localhost:5174",       // local dev alternative
     "https://safarishare.netlify.app" // production frontend
   ],
   credentials: true,
