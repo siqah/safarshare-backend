@@ -31,7 +31,7 @@ app.use(cors({
 //Routes
 app.use('/api/auth', auth);
 app.use('/api/driver', driver);
-app.use('/api/ride', protect, ride);
+app.use('/api/ride', ride);
 
 
 // Health check
