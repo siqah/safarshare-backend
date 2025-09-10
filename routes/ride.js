@@ -3,6 +3,7 @@ import Ride from '../models/Ride.js';
 import Booking from '../models/Booking.js';
 import { protect, } from '../middleware/authMiddleware.js';
 import {getIO} from '../config/socket.js';
+import Notification from '../models/Notification.js';
 
 const router = express.Router();
 
@@ -71,10 +72,61 @@ router.put("/:id/cancel", protect, async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
+    const booking = await Booking.findOne({ ride: req.params.id, status: "booked" });
+
     ride.status = "canceled";
     ride.canceledAt = new Date();
 
     await ride.save();
+
+    if (booking) {
+      // Update booking status
+      booking.status = "cancelled";
+      await booking.save();
+
+      // 🔔 Persist + notify driver
+      const note = await Notification.create({
+        user: ride.driver,
+        type: 'cancellation',
+        title: 'Ride cancelled',
+        message: `You cancelled the ride to ${ride.destination}.`,
+        ride: ride._id,
+        booking: booking._id,
+      });
+      const io = getIO();
+      io.to(`driver:${ride.driver}`).emit("notification", {
+        id: note._id,
+        type: note.type,
+        title: note.title,
+        message: note.message,
+        rideId: ride._id,
+        bookingId: booking._id,
+        createdAt: note.createdAt,
+      });
+      const driverUnread = await Notification.countDocuments({ user: ride.driver, isRead: false });
+      io.to(`driver:${ride.driver}`).emit('notification:count', { unread: driverUnread });
+
+      // Notify passenger
+      const pNote = await Notification.create({
+        user: booking.passenger,
+        type: 'cancellation',
+        title: 'Ride cancelled',
+        message: `The ride to ${ride.destination} has been cancelled by the driver.`,
+        ride: ride._id,
+        booking: booking._id,
+      });
+      io.to(`passenger:${booking.passenger}`).emit("notification", {
+        id: pNote._id,
+        type: pNote.type,
+        title: pNote.title,
+        message: pNote.message,
+        rideId: ride._id,
+        bookingId: booking._id,
+        createdAt: pNote.createdAt,
+      });
+      const passengerUnread = await Notification.countDocuments({ user: booking.passenger, isRead: false });
+      io.to(`passenger:${booking.passenger}`).emit('notification:count', { unread: passengerUnread });
+    }
 
     res.json({ message: "Ride canceled successfully", ride });
   } catch (err) {
@@ -155,16 +207,52 @@ router.post("/book/:rideId", protect, async (req, res) => {
       populate: { path: "driver", select: "name email" },
     });
 
-    // 🔔 Notify driver via Socket.io
-    const io = getIO();
-    io.to(`driver:${ride.driver._id}`).emit("bookingUpdate", {
-      type: "booked",
-      bookingId: booking._id,
-      rideId: ride._id,
-      passengerId: req.user._id,
-      seatsBooked: seatsRequested,
-      message: "A new booking has been made for your ride.",
+    // 🔔 Persist + notify driver
+  const note = await Notification.create({
+      user: ride.driver._id,
+      type: 'booking',
+      title: 'New booking',
+      message: `${req.user.name || 'A passenger'} booked ${seatsRequested} seat(s).`,
+      ride: ride._id,
+      booking: booking._id,
     });
+    const io = getIO();
+  io.to(`driver:${ride.driver._id}`).emit("notification", {
+      id: note._id,
+      type: note.type,
+      title: note.title,
+      message: note.message,
+      rideId: ride._id,
+      bookingId: booking._id,
+      seatsDelta: -seatsRequested,
+      createdAt: note.createdAt,
+    });
+  console.log('Emitted notification to driver:', `driver:${ride.driver._id}`);
+  // driver unread count
+  const driverUnread = await Notification.countDocuments({ user: ride.driver._id, isRead: false });
+  io.to(`driver:${ride.driver._id}`).emit('notification:count', { unread: driverUnread });
+
+    // Notify passenger
+    const pNote = await Notification.create({
+      user: req.user._id,
+      type: 'booking',
+      title: 'Booking confirmed',
+      message: `You booked ${seatsRequested} seat(s) to ${ride.destination}.`,
+      ride: ride._id,
+      booking: booking._id,
+    });
+  io.to(`passenger:${req.user._id}`).emit("notification", {
+      id: pNote._id,
+      type: pNote.type,
+      title: pNote.title,
+      message: pNote.message,
+      rideId: ride._id,
+      bookingId: booking._id,
+      createdAt: pNote.createdAt,
+    });
+  console.log('Emitted notification to passenger:', `passenger:${req.user._id}`);
+  const passengerUnread = await Notification.countDocuments({ user: req.user._id, isRead: false });
+  io.to(`passenger:${req.user._id}`).emit('notification:count', { unread: passengerUnread });
 
     res.status(201).json({ message: "Ride booked", ride, booking });
   } catch (err) {
@@ -214,16 +302,51 @@ router.post("/cancel/:bookingId", protect, async (req, res) => {
     });
     await booking.save();
 
-    // 🔔 Notify driver via Socket.io
-    const io = getIO();
-    io.to(`driver:${booking.ride.driver}`).emit("bookingUpdate", {
-      type: "cancelled",
-      bookingId: booking._id,
-      rideId: booking.ride._id,
-      passengerId: req.user._id,
-      seatsReleased: booking.seatsBooked,
-      message: "A passenger cancelled their booking for your ride.",
+    // 🔔 Persist + notify driver
+    const note = await Notification.create({
+      user: booking.ride.driver,
+      type: 'cancellation',
+      title: 'Booking cancelled',
+      message: `${req.user.name || 'A passenger'} cancelled ${booking.seatsBooked} seat(s).`,
+      ride: booking.ride._id,
+      booking: booking._id,
     });
+    const io = getIO();
+  io.to(`driver:${booking.ride.driver}`).emit("notification", {
+      id: note._id,
+      type: note.type,
+      title: note.title,
+      message: note.message,
+      rideId: booking.ride._id,
+      bookingId: booking._id,
+      seatsDelta: booking.seatsBooked,
+      createdAt: note.createdAt,
+    });
+  console.log('Emitted notification to driver:', `driver:${booking.ride.driver}`);
+  const driverUnread2 = await Notification.countDocuments({ user: booking.ride.driver, isRead: false });
+  io.to(`driver:${booking.ride.driver}`).emit('notification:count', { unread: driverUnread2 });
+
+    // Notify passenger
+    const pNote = await Notification.create({
+      user: req.user._id,
+      type: 'cancellation',
+      title: 'Booking cancelled',
+      message: `You cancelled ${booking.seatsBooked} seat(s) for this ride.`,
+      ride: booking.ride._id,
+      booking: booking._id,
+    });
+  io.to(`passenger:${req.user._id}`).emit("notification", {
+      id: pNote._id,
+      type: pNote.type,
+      title: pNote.title,
+      message: pNote.message,
+      rideId: booking.ride._id,
+      bookingId: booking._id,
+      createdAt: pNote.createdAt,
+    });
+  console.log('Emitted notification to passenger:', `passenger:${req.user._id}`);
+  const passengerUnread2 = await Notification.countDocuments({ user: req.user._id, isRead: false });
+  io.to(`passenger:${req.user._id}`).emit('notification:count', { unread: passengerUnread2 });
 
     res.json({ message: "Booking cancelled", booking });
   } catch (err) {
