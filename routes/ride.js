@@ -3,6 +3,7 @@ import Ride from '../models/Ride.js';
 import Booking from '../models/Booking.js';
 import { protect, } from '../middleware/authMiddleware.js';
 import {getIO} from '../config/socket.js';
+import Notification from '../models/Notification.js';
 
 const router = express.Router();
 
@@ -155,15 +156,24 @@ router.post("/book/:rideId", protect, async (req, res) => {
       populate: { path: "driver", select: "name email" },
     });
 
-    // 🔔 Notify driver via Socket.io
+    // 🔔 Persist + notify driver
+    const note = await Notification.create({
+      user: ride.driver._id,
+      type: 'booking',
+      title: 'New booking',
+      message: `${req.user.name || 'A passenger'} booked ${seatsRequested} seat(s).`,
+      ride: ride._id,
+      booking: booking._id,
+    });
     const io = getIO();
-    io.to(`driver:${ride.driver._id}`).emit("bookingUpdate", {
-      type: "booked",
-      bookingId: booking._id,
+    io.to(`driver:${ride.driver._id}`).emit("notification", {
+      id: note._id,
+      type: note.type,
+      title: note.title,
+      message: note.message,
       rideId: ride._id,
-      passengerId: req.user._id,
-      seatsBooked: seatsRequested,
-      message: "A new booking has been made for your ride.",
+      bookingId: booking._id,
+      createdAt: note.createdAt,
     });
 
     res.status(201).json({ message: "Ride booked", ride, booking });
@@ -214,15 +224,24 @@ router.post("/cancel/:bookingId", protect, async (req, res) => {
     });
     await booking.save();
 
-    // 🔔 Notify driver via Socket.io
+    // 🔔 Persist + notify driver
+    const note = await Notification.create({
+      user: booking.ride.driver,
+      type: 'cancellation',
+      title: 'Booking cancelled',
+      message: `${req.user.name || 'A passenger'} cancelled ${booking.seatsBooked} seat(s).`,
+      ride: booking.ride._id,
+      booking: booking._id,
+    });
     const io = getIO();
-    io.to(`driver:${booking.ride.driver}`).emit("bookingUpdate", {
-      type: "cancelled",
-      bookingId: booking._id,
+    io.to(`driver:${booking.ride.driver}`).emit("notification", {
+      id: note._id,
+      type: note.type,
+      title: note.title,
+      message: note.message,
       rideId: booking.ride._id,
-      passengerId: req.user._id,
-      seatsReleased: booking.seatsBooked,
-      message: "A passenger cancelled their booking for your ride.",
+      bookingId: booking._id,
+      createdAt: note.createdAt,
     });
 
     res.json({ message: "Booking cancelled", booking });
