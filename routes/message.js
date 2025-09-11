@@ -51,6 +51,30 @@ router.get('/ride/:rideId', protect, async (req, res) => {
   }
 });
 
+// GET participants (booked passengers) for a ride (driver only)
+router.get('/ride/:rideId/participants', protect, async (req, res) => {
+  try {
+    const { rideId } = req.params;
+    const ride = await Ride.findById(rideId).select('driver');
+    if (!ride) return res.status(404).json({ message: 'Ride not found' });
+    if (ride.driver.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only driver can view participants' });
+    }
+    const bookings = await Booking.find({ ride: rideId, status: 'booked' })
+      .populate({ path: 'passenger', select: 'name email' })
+      .select('passenger');
+    const participants = bookings.map(b => ({
+      id: b.passenger?._id,
+      name: b.passenger?.name,
+      email: b.passenger?.email,
+    })).filter(p => p.id);
+    res.json({ participants });
+  } catch (e) {
+    console.error('Get participants error', e);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // POST send message
 router.post('/ride/:rideId', protect, async (req, res) => {
   try {
