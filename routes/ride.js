@@ -7,8 +7,8 @@ import Notification from '../models/Notification.js';
 
 const router = express.Router();
 
-// Get a ride by id
-router.get('/:id', protect, async (req, res) => {
+// Get a ride by id (use a specific path to avoid conflicts with other routes like /myRides)
+router.get('/details/:id', protect, async (req, res) => {
   try {
     const ride = await Ride.findById(req.params.id).populate('driver', 'name email');
     if (!ride) return res.status(404).json({ message: 'Ride not found' });
