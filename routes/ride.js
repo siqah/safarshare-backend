@@ -7,8 +7,8 @@ import Notification from '../models/Notification.js';
 
 const router = express.Router();
 
-// Get a ride by id
-router.get('/:id', protect, async (req, res) => {
+// Get a ride by id (use a specific path to avoid conflicts with other routes like /myRides)
+router.get('/details/:id', protect, async (req, res) => {
   try {
     const ride = await Ride.findById(req.params.id).populate('driver', 'name email');
     if (!ride) return res.status(404).json({ message: 'Ride not found' });
@@ -72,7 +72,7 @@ router.get('/myRides', protect, async (req, res) => {
     }
 })
 
-router.put("/:id/cancel", protect, async (req, res) => {
+router.put(":id/cancel", protect, async (req, res) => {
   try {
     const ride = await Ride.findById(req.params.id);
 
@@ -85,60 +85,55 @@ router.put("/:id/cancel", protect, async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const booking = await Booking.findOne({ ride: req.params.id, status: "booked" });
-
     ride.status = "canceled";
     ride.canceledAt = new Date();
 
     await ride.save();
 
-    if (booking) {
-      // Update booking status
-      booking.status = "cancelled";
-      await booking.save();
+    // 🔔 Notify driver
+    const driverNote = await Notification.create({
+      user: ride.driver,
+      type: 'cancellation',
+      title: 'Ride cancelled',
+      message: `You cancelled the ride to ${ride.destination}.`,
+      ride: ride._id,
+    });
+    const io = getIO();
+    io.to(`driver:${ride.driver}`).emit("notification", {
+      id: driverNote._id,
+      type: driverNote.type,
+      title: driverNote.title,
+      message: driverNote.message,
+      rideId: ride._id,
+      createdAt: driverNote.createdAt,
+    });
+    const driverUnread = await Notification.countDocuments({ user: ride.driver, isRead: false });
+    io.to(`driver:${ride.driver}`).emit('notification:count', { unread: driverUnread });
 
-      // 🔔 Persist + notify driver
-      const note = await Notification.create({
-        user: ride.driver,
-        type: 'cancellation',
-        title: 'Ride cancelled',
-        message: `You cancelled the ride to ${ride.destination}.`,
-        ride: ride._id,
-        booking: booking._id,
-      });
-      const io = getIO();
-      io.to(`driver:${ride.driver}`).emit("notification", {
-        id: note._id,
-        type: note.type,
-        title: note.title,
-        message: note.message,
-        rideId: ride._id,
-        bookingId: booking._id,
-        createdAt: note.createdAt,
-      });
-      const driverUnread = await Notification.countDocuments({ user: ride.driver, isRead: false });
-      io.to(`driver:${ride.driver}`).emit('notification:count', { unread: driverUnread });
-
-      // Notify passenger
+    // Cancel all active bookings for this ride and notify each passenger
+    const activeBookings = await Booking.find({ ride: req.params.id, status: "booked" });
+    for (const b of activeBookings) {
+      b.status = 'cancelled';
+      await b.save();
       const pNote = await Notification.create({
-        user: booking.passenger,
+        user: b.passenger,
         type: 'cancellation',
         title: 'Ride cancelled',
         message: `The ride to ${ride.destination} has been cancelled by the driver.`,
         ride: ride._id,
-        booking: booking._id,
+        booking: b._id,
       });
-      io.to(`passenger:${booking.passenger}`).emit("notification", {
+      io.to(`passenger:${b.passenger}`).emit("notification", {
         id: pNote._id,
         type: pNote.type,
         title: pNote.title,
         message: pNote.message,
         rideId: ride._id,
-        bookingId: booking._id,
+        bookingId: b._id,
         createdAt: pNote.createdAt,
       });
-      const passengerUnread = await Notification.countDocuments({ user: booking.passenger, isRead: false });
-      io.to(`passenger:${booking.passenger}`).emit('notification:count', { unread: passengerUnread });
+      const pUnread = await Notification.countDocuments({ user: b.passenger, isRead: false });
+      io.to(`passenger:${b.passenger}`).emit('notification:count', { unread: pUnread });
     }
 
     res.json({ message: "Ride canceled successfully", ride });
@@ -189,6 +184,15 @@ router.post("/book/:rideId", protect, async (req, res) => {
 
     if (existingBooking) {
       return res.status(400).json({ message: "You already have a booking for this ride" });
+    }
+
+    // Check ride status first; cannot book if driver cancelled or ride inactive
+    const rideDoc = await Ride.findById(req.params.rideId);
+    if (!rideDoc) {
+      return res.status(404).json({ message: "Ride not found" });
+    }
+    if (rideDoc.status !== "active") {
+      return res.status(400).json({ message: "Ride is not active (may be cancelled by driver or completed)" });
     }
 
     // Atomically decrement seats if available
@@ -361,7 +365,7 @@ router.post("/cancel/:bookingId", protect, async (req, res) => {
   const passengerUnread2 = await Notification.countDocuments({ user: req.user._id, isRead: false });
   io.to(`passenger:${req.user._id}`).emit('notification:count', { unread: passengerUnread2 });
 
-    res.json({ message: "Booking cancelled", booking });
+    res.json({ message: "Booking cancelled. You can rebook later if the ride remains active and seats are available.", booking });
   } catch (err) {
     console.error("Cancel booking error:", err);
     res.status(500).json({ message: "Server error" });
