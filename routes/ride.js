@@ -7,6 +7,19 @@ import Notification from '../models/Notification.js';
 
 const router = express.Router();
 
+// Get a ride by id
+router.get('/:id', protect, async (req, res) => {
+  try {
+    const ride = await Ride.findById(req.params.id).populate('driver', 'name email');
+    if (!ride) return res.status(404).json({ message: 'Ride not found' });
+    // Authorization: driver or any passenger who booked can view; for simplicity allow authenticated users to fetch basic route info
+    res.json({ ride });
+  } catch (err) {
+    console.error('Get ride by id error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Driver rides
 router.get('/driver/rides', protect, async (req, res) => {
     try {
